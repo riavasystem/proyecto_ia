@@ -31,7 +31,7 @@ jobs:
 
       - name: Pytest
         env:
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           JWT_SECRET: ci-test-secret
         run: pytest -q
 
