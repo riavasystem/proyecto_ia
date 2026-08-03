@@ -2,7 +2,6 @@
 
 Guía operativa para trabajar en este repositorio. Léela completa antes de escribir código.
 
----
 
 ## 1. Qué es este proyecto
 
