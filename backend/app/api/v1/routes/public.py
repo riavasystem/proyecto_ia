@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentCompanyId, require_scope
 from app.api.rate_limit import enforce_rate_limit
+from app.api.v1.routes import chat
 from app.api.v1.routes._public_list import build_public_list_router
 from app.core.exceptions import NotFoundError
 from app.db.session import get_db
@@ -61,3 +62,4 @@ router.include_router(
         model=FAQ, read_schema=FAQRead, prefix="/faq", tags=["public"], active_only=False
     )
 )
+router.include_router(chat.router)

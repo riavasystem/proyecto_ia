@@ -1,6 +1,8 @@
 from app.models.api_key import ApiKey
 from app.models.branch import Branch
 from app.models.company import Company
+from app.models.contact import Contact
+from app.models.conversation import Conversation, Message
 from app.models.faq import FAQ
 from app.models.policy import Policy
 from app.models.product import Product
@@ -15,6 +17,9 @@ __all__ = [
     "Branch",
     "BusinessHour",
     "Company",
+    "Contact",
+    "Conversation",
+    "Message",
     "Policy",
     "Product",
     "Promotion",

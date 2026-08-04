@@ -5,6 +5,7 @@ from app.api.v1.routes import (
     auth,
     branches,
     company,
+    conversations_admin,
     faqs,
     policies,
     products,
@@ -24,3 +25,4 @@ router.include_router(schedule.router)
 router.include_router(promotions.router)
 router.include_router(policies.router)
 router.include_router(faqs.router)
+router.include_router(conversations_admin.router)
