@@ -195,8 +195,57 @@ Flujo completo contra `https://api-ia.riava.cl` (datos de prueba limpiados despu
 - [ ] Endpoint público de horarios (`/public/schedule`) — sigue pendiente de la Fase 3.
 - [ ] Webhooks salientes (sección 10.6) — sería el momento natural de emitir `message.received`/`message.replied` desde `/public/chat`.
 - [ ] Migrar el motor de IA a un LLM real (Claude API) cuando el usuario decida — el contrato público no cambia, solo la implementación interna de `app/ai/engine.py`.
-- [ ] Plugin Manager (`/plugins_runtime`) y primer plugin de ejemplo — con esto, el motor de IA podría "Ejecutar el plugin correspondiente" (sección 7), que hoy no existe en absoluto.
+- [x] ~~Plugin Manager (`/plugins_runtime`) y primer plugin de ejemplo~~ — hecho, ver entrada siguiente.
 - [ ] Pantallas reales del panel administrativo, incluyendo una vista de conversaciones (ya hay API: `/admin/conversations`).
 - [ ] Endpoint de logout / invalidación de refresh tokens.
 - [ ] Idempotency-Key en `POST /public/chat` (sección 10.7) — ahora que existe un POST público que crea recursos, esto empieza a ser relevante de verdad.
+- [ ] Considerar mover secretos de producción a un gestor (hoy el `.env` del servidor se armó a mano vía SSH).
+
+---
+
+## 2026-08-04 (cont.) — Fase 5: Plugin Manager + plugin de ejemplo "agenda"
+
+### Qué se creó
+
+**`app/plugins_runtime/`** (runtime del Core, sección 8 del CLAUDE.md):
+- `interface.py`: `PluginManifest` (Pydantic, valida `manifest.json`), `PluginContext` (dataclass — es **lo único** que un plugin puede tocar del Core: `company_id`, sesión de DB, cliente de Redis, `config`, logger, `user_id` opcional), `PluginResult` (`success`/`message`/`data`), `PluginInterface` (Protocol con `install`/`update`/`uninstall`/`configure`/`execute`/`check_permissions`).
+- `registry.py`: descubre plugins recorriendo `PLUGINS_DIR` (nueva setting, default `../plugins` en dev local) buscando pares `manifest.json` + `plugin.py`. Un plugin con manifiesto inválido o que explota al importarse **se omite silenciosamente**, no tumba el arranque del Core — coherente con "un plugin que falla no puede tumbar el Core".
+- `manager.py` (`PluginManager`): `install`/`uninstall`/`configure` propagan errores del plugin como `PluginExecutionError` (402→502, el admin necesita enterarse si algo falló). `execute()` es la pieza importante: corre con `asyncio.wait_for(..., timeout=plugin_execution_timeout_seconds)` (default 5s) y captura **cualquier** excepción, devolviendo siempre un `PluginResult` degradado en vez de propagar — nunca un 500.
+
+**Modelo `InstalledPlugin`** (Core, no de plugin): qué plugins tiene instalados cada tenant, su `config` (JSON) y si está `is_enabled`. Administrar plugins es responsabilidad del Core (sección 4); el código del plugin en sí vive fuera, en `/plugins`.
+
+**Endpoints**:
+- Admin `/api/v1/admin/plugins`: `GET` (lista disponibles + estado de instalación por tenant), `POST /{name}/install`, `DELETE /{name}/uninstall`, `PATCH /{name}/configure`, `POST /{name}/enable`, `POST /{name}/disable`.
+- Público `POST /api/v1/public/plugins/{name}/execute` (scope `plugins:execute`, sección 10.4): recibe `{action, payload}`, delega al `PluginManager`, devuelve `{success, message, data}`.
+
+**Plugin de ejemplo "agenda"** (`/plugins/agenda/`, el mismo del manifiesto de ejemplo de la sección 8 del CLAUDE.md): reservas de citas simples. Tiene su propia tabla `plg_agenda_bookings` (prefijo `plg_<nombre>_` obligatorio) que el propio plugin crea en su `install()` vía SQL crudo — **nunca** toca tablas ni modelos del Core, ni los importa (solo importa `app.plugins_runtime.interface`, que es la API pública permitida, y `sqlalchemy` como dependencia externa normal). Acciones soportadas: `create_booking`, `list_bookings`. `check_permissions` solo permite esas dos acciones — cualquier otra se rechaza antes de llegar a `execute`.
+
+### Cambio de infraestructura: Docker ahora buildea desde la raíz del repo
+
+El backend original solo copiaba `backend/` a la imagen — pero `/plugins` es un directorio hermano, top-level, fuera de `backend/`. Sin este cambio, el Plugin Manager no tendría nada que descubrir en producción (el registry buscaría en un directorio que no existe dentro del contenedor).
+
+- `backend/Dockerfile`: ahora asume que el build context es la **raíz del repo**, no `backend/` — todos los `COPY` cambiaron a rutas `backend/...` y se agregó `COPY plugins ./plugins` + `ENV PLUGINS_DIR=/app/plugins`.
+- `.github/workflows/deploy-backend.yml`: `docker/build-push-action` pasó de `context: backend` a `context: .` + `file: backend/Dockerfile`. El trigger `paths:` ahora también incluye `plugins/**` (un cambio solo en un plugin ahora sí redeploya el backend).
+- `.dockerignore` se movió de `backend/.dockerignore` a la raíz (Docker solo respeta el que está en la raíz del build context).
+- `docker-compose.yml` (dev local): mismo cambio de contexto, más un volumen nuevo `./plugins:/app/plugins` para hot-reload de plugins en desarrollo.
+
+**Verificado en el servidor**: `docker exec proyecto_ia-backend-1 ls /app/plugins/agenda` muestra `manifest.json` y `plugin.py` — la imagen sí los tiene.
+
+### Nota sobre la máquina de desarrollo (siguió mejorando)
+
+Con menos apps abiertas, `mypy` corrió local sin problema esta vez (antes tiraba `INTERNAL ERROR` o tardaba +10 min). `pytest` completo siguió lento (varios minutos), así que la confirmación final se hizo en CI como en las fases anteriores — pero cada vez hay menos fricción.
+
+### Estado verificado en producción (2026-08-04)
+
+Flujo completo contra `https://api-ia.riava.cl` (datos de prueba limpiados después): `GET /admin/plugins` muestra "agenda" disponible y no instalado → `POST /admin/plugins/agenda/install` → 201, crea `plg_agenda_bookings` → API key con scope `plugins:execute` → `POST /public/plugins/agenda/execute` con `action: create_booking` → reserva creada → `action: list_bookings` → la trae de vuelta.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 5)
+
+- [ ] Las migraciones de plugins no pasan por Alembic todavía — el plugin crea su tabla a mano en `install()` (`CREATE TABLE IF NOT EXISTS`). Funciona para el MVP pero no soporta migraciones de esquema versionadas ni rollback de las tablas del plugin. La sección 8 del CLAUDE.md pide "migraciones propias, dentro del plugin" — falta el mecanismo que las aplique de forma versionada.
+- [ ] El motor de IA (`app/ai/engine.py`) todavía no invoca plugins automáticamente — hoy `/public/chat` y `/public/plugins/{name}/execute` son dos caminos separados. Sección 7: "determinar si debe ejecutarse un plugin" sigue sin resolver del lado del motor de IA (el tercero tiene que saber que existe el plugin y llamarlo él mismo).
+- [ ] Sistema de eventos/hooks declarado en el manifiesto (`hooks: ["message.received", "conversation.closed"]`) no está conectado a nada todavía — el manifiesto los declara pero no hay un event bus que los dispare cuando ocurren esos eventos reales.
+- [ ] Credenciales de plugins cifradas por tenant (sección 8) — no aplica todavía porque "agenda" no usa credenciales externas, pero el mecanismo genérico no existe.
+- [ ] Endpoint público de horarios (`/public/schedule`), listado de conversaciones con cursor, webhooks salientes — siguen pendientes de fases anteriores.
+- [ ] Pantallas reales del panel administrativo (incluyendo una para plugins: instalar/configurar/ver desde la UI).
+- [ ] Endpoint de logout / invalidación de refresh tokens.
 - [ ] Considerar mover secretos de producción a un gestor (hoy el `.env` del servidor se armó a mano vía SSH).
