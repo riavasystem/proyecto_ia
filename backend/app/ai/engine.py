@@ -39,28 +39,31 @@ async def process_message(db: AsyncSession, company_id: UUID, message: str) -> A
         return AIReply(intent=intent, text=responder.greeting(company))
 
     if intent is Intent.SERVICES:
-        result = await db.execute(
+        services_result = await db.execute(
             select(Service).where(Service.company_id == company_id, Service.is_active.is_(True))
         )
-        return AIReply(intent=intent, text=responder.services_reply(list(result.scalars().all())))
+        services = list(services_result.scalars().all())
+        return AIReply(intent=intent, text=responder.services_reply(services))
 
     if intent is Intent.PRODUCTS:
-        result = await db.execute(
+        products_result = await db.execute(
             select(Product).where(Product.company_id == company_id, Product.is_active.is_(True))
         )
-        return AIReply(intent=intent, text=responder.products_reply(list(result.scalars().all())))
+        products = list(products_result.scalars().all())
+        return AIReply(intent=intent, text=responder.products_reply(products))
 
     if intent is Intent.SCHEDULE:
-        result = await db.execute(
+        hours_result = await db.execute(
             select(BusinessHour)
             .where(BusinessHour.company_id == company_id)
             .order_by(BusinessHour.day_of_week)
         )
-        return AIReply(intent=intent, text=responder.schedule_reply(list(result.scalars().all())))
+        hours = list(hours_result.scalars().all())
+        return AIReply(intent=intent, text=responder.schedule_reply(hours))
 
     if intent is Intent.PROMOTIONS:
         today = date.today()
-        result = await db.execute(
+        promotions_result = await db.execute(
             select(Promotion).where(
                 Promotion.company_id == company_id,
                 Promotion.is_active.is_(True),
@@ -68,10 +71,12 @@ async def process_message(db: AsyncSession, company_id: UUID, message: str) -> A
                 (Promotion.ends_on.is_(None)) | (Promotion.ends_on >= today),
             )
         )
-        return AIReply(intent=intent, text=responder.promotions_reply(list(result.scalars().all())))
+        promotions = list(promotions_result.scalars().all())
+        return AIReply(intent=intent, text=responder.promotions_reply(promotions))
 
     if intent is Intent.POLICIES:
-        result = await db.execute(select(Policy).where(Policy.company_id == company_id))
-        return AIReply(intent=intent, text=responder.policies_reply(list(result.scalars().all())))
+        policies_result = await db.execute(select(Policy).where(Policy.company_id == company_id))
+        policies = list(policies_result.scalars().all())
+        return AIReply(intent=intent, text=responder.policies_reply(policies))
 
     return AIReply(intent=Intent.UNKNOWN, text=responder.unknown_reply())

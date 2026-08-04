@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,4 +15,4 @@ class Contact(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
     __tablename__ = "contacts"
 
     external_id: Mapped[str] = mapped_column(nullable=False)
-    external_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    external_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

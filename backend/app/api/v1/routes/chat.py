@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -21,7 +21,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _get_or_create_contact(
-    db: AsyncSession, company_id: UUID, external_id: str, external_metadata: dict | None
+    db: AsyncSession, company_id: UUID, external_id: str, external_metadata: dict[str, Any] | None
 ) -> Contact:
     result = await db.execute(
         select(Contact).where(Contact.company_id == company_id, Contact.external_id == external_id)
