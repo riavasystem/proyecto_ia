@@ -33,6 +33,7 @@ def create_access_token(user_id: UUID, company_id: UUID) -> str:
         "sub": str(user_id),
         "company_id": str(company_id),
         "type": "access",
+        "jti": secrets.token_urlsafe(16),
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
     }
@@ -46,6 +47,7 @@ def create_refresh_token(user_id: UUID, company_id: UUID) -> str:
         "sub": str(user_id),
         "company_id": str(company_id),
         "type": "refresh",
+        "jti": secrets.token_urlsafe(16),
         "iat": now,
         "exp": now + timedelta(days=settings.refresh_token_expire_days),
     }

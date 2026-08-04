@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch, clearTokens, getAccessToken, setTokens } from "@/lib/api";
+import { apiFetch, clearTokens, getAccessToken, getRefreshToken, setTokens } from "@/lib/api";
 
 interface TokenResponse {
   access_token: string;
@@ -76,9 +76,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout(): void {
+    const refreshToken = getRefreshToken();
     clearTokens();
     notifyAuthChanged();
     router.push("/login");
+    if (refreshToken) {
+      // Best-effort: invalida el refresh token en el servidor. Si falla (red,
+      // backend caído), la sesión local ya quedó cerrada de todas formas.
+      void apiFetch("/api/v1/admin/auth/logout", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }).catch(() => {});
+    }
   }
 
   return (
