@@ -31,7 +31,6 @@ export function CrudPage<T extends { id: string }>({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const load = useCallback(async () => {
-    setIsLoading(true);
     try {
       const data = await apiFetch<T[]>(resourcePath);
       setItems(data);

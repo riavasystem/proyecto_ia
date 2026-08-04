@@ -19,17 +19,17 @@ const NAV_ITEMS = [
 ];
 
 export default function PanelLayout({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, logout } = useAuth();
+  const { isAuthenticated, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    if (!isAuthenticated) {
       router.replace("/login");
     }
-  }, [isLoading, isAuthenticated, router]);
+  }, [isAuthenticated, router]);
 
-  if (isLoading || !isAuthenticated) {
+  if (!isAuthenticated) {
     return (
       <main className="flex min-h-screen items-center justify-center">
         <p className="text-sm text-zinc-500">Cargando…</p>

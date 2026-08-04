@@ -30,7 +30,6 @@ export default function PluginsPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
-    setIsLoading(true);
     try {
       setItems(await apiFetch<PluginListItem[]>("/api/v1/admin/plugins"));
       setError(null);

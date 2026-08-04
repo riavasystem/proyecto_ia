@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, clearTokens, getAccessToken, setTokens } from "@/lib/api";
 
@@ -12,7 +12,6 @@ interface TokenResponse {
 
 interface AuthContextValue {
   isAuthenticated: boolean;
-  isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (companyName: string, adminEmail: string, adminPassword: string) => Promise<void>;
   logout: () => void;
@@ -20,15 +19,33 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const router = useRouter();
+// El token vive en localStorage, fuera del árbol de React. useSyncExternalStore
+// es la forma correcta de leerlo: evita el mismatch de hidratación que produciría
+// un useEffect + setState en el primer render (server no ve localStorage).
+let listeners: Array<() => void> = [];
 
-  useEffect(() => {
-    setIsAuthenticated(getAccessToken() !== null);
-    setIsLoading(false);
-  }, []);
+function notifyAuthChanged(): void {
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners = [...listeners, listener];
+  return () => {
+    listeners = listeners.filter((l) => l !== listener);
+  };
+}
+
+function getSnapshot(): boolean {
+  return getAccessToken() !== null;
+}
+
+function getServerSnapshot(): boolean {
+  return false;
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const isAuthenticated = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const router = useRouter();
 
   async function login(email: string, password: string): Promise<void> {
     const tokens = await apiFetch<TokenResponse>("/api/v1/admin/auth/login", {
@@ -36,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ email, password }),
     });
     setTokens(tokens.access_token, tokens.refresh_token);
-    setIsAuthenticated(true);
+    notifyAuthChanged();
     router.push("/dashboard");
   }
 
@@ -54,18 +71,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }),
     });
     setTokens(tokens.access_token, tokens.refresh_token);
-    setIsAuthenticated(true);
+    notifyAuthChanged();
     router.push("/dashboard");
   }
 
   function logout(): void {
     clearTokens();
-    setIsAuthenticated(false);
+    notifyAuthChanged();
     router.push("/login");
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

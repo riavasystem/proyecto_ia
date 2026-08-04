@@ -36,7 +36,6 @@ export default function ApiKeysPage() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
 
   async function load() {
-    setIsLoading(true);
     try {
       setKeys(await apiFetch<ApiKey[]>("/api/v1/admin/api-keys"));
       setError(null);

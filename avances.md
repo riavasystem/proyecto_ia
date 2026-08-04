@@ -2,6 +2,11 @@
 
 Registro cronológico de lo hecho. Léelo primero al retomar el proyecto — evita tener que re-explorar todo el repo o la infra desde cero.
 
+## Convenciones de trabajo
+
+- **No esperar `lint`/`typecheck`/`mypy`/`pytest` corriendo en local de forma indefinida.** La máquina de desarrollo (8GB RAM, varias sesiones de Claude Code/VSCode/Chrome abiertas a la vez) hace que estos comandos tarden minutos o se cuelguen. El pipeline de CI (`.github/workflows/ci.yml`) corre exactamente los mismos checks sin esa limitación. Flujo preferido: intentar el check en local con espera acotada; si tarda demasiado, **hacer commit y push igual** y dejar que CI sea el gate real, revisando el resultado vía `gh run view`/`gh run view --log-failed`. Si CI falla, corregir y volver a pushear — nunca forzar el merge con CI en rojo.
+- Frontend en Vercel se despliega automáticamente vía la integración Git al hacer push a `main` — no depende del CLI local de Vercel ni de un workflow de GitHub Actions propio.
+
 ---
 
 ## 2026-08-03 — Bootstrap inicial: repo, backend, frontend, CI/CD, deploy a producción
