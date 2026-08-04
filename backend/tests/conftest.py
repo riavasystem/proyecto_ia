@@ -5,6 +5,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.rate_limit import enforce_rate_limit
+from app.core.redis import reset_redis
 from app.db import session as db_session
 from app.db.base import Base
 from app.db.session import get_db
@@ -13,6 +14,7 @@ from app.main import app
 
 @pytest.fixture
 async def client() -> AsyncGenerator[AsyncClient]:
+    await reset_redis()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
