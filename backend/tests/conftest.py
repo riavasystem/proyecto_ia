@@ -14,7 +14,7 @@ from app.main import app
 
 @pytest.fixture
 async def client() -> AsyncGenerator[AsyncClient]:
-    await reset_redis()
+    reset_redis()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
