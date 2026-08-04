@@ -103,11 +103,53 @@ Se probó el flujo completo contra `https://api-ia.riava.cl` (y se limpiaron los
 
 Ese día la Mac de desarrollo tenía varias sesiones de Claude Code + VSCode + Chrome corriendo en paralelo con 8GB de RAM total — cualquier comando local (`pip install`, `mypy`, `pytest`, hasta `git add`) tardaba entre 2 y 20 minutos, y `mypy` llegó a tirar un `INTERNAL ERROR` por presión de memoria. La verificación real de mypy/pytest terminó haciéndose en GitHub Actions (que no tiene esa limitación), no localmente. Si esto se repite: no pelear con la máquina local, hacer `ruff check` (liviano, siempre anduvo rápido) y dejar que CI valide el resto.
 
-### Pendiente / próximos pasos sugeridos (al cierre del 2026-08-04)
+### Pendiente / próximos pasos sugeridos (al cierre del 2026-08-04, antes de la Fase 3)
 
-- [ ] API pública `/api/v1/public/...` con API keys (`sk_live_`/`sk_test_`), scopes y rate limit (sección 10.2 del CLAUDE.md) — hoy los endpoints de negocio solo existen del lado admin (JWT), no hay forma de que un proyecto externo los consuma todavía.
+- [x] ~~API pública con API keys, scopes y rate limit~~ — hecho, ver entrada siguiente.
 - [ ] Endpoint `POST /api/v1/public/chat` y el motor de IA (intención → consulta → respuesta).
 - [ ] Plugin Manager (`/plugins_runtime`) y primer plugin de ejemplo.
 - [ ] Pantallas reales del panel administrativo — el frontend sigue siendo solo el dashboard placeholder; falta CRUD en UI para Servicios/Productos/Horarios/Promociones/Políticas/FAQ.
 - [ ] Endpoint de logout / invalidación de refresh tokens (hoy no hay revocación, solo expiración).
+- [ ] Considerar mover secretos de producción a un gestor (hoy el `.env` del servidor se armó a mano vía SSH).
+
+---
+
+## 2026-08-04 (cont.) — Fase 3: API pública con API keys, scopes y rate limit
+
+### Qué se creó
+
+**Modelo `ApiKey`** (`app/models/api_key.py`): key con prefijo visible (`sk_live_...`/`sk_test_...`) para identificarla en el panel sin exponer el secreto, hash SHA-256 (no Argon2 — necesitamos *buscar* la key por hash en cada request, no solo verificarla contra un candidato con salt), `environment`, `scopes` (string separado por comas, ver `API_KEY_SCOPES`), `rate_limit_per_minute`, `is_active`, `expires_at`, `last_used_at`.
+
+**Endpoints admin `/api/v1/admin/api-keys`**: crear (la key en texto plano se devuelve **una sola vez**, en la respuesta del create), listar (sin el secreto), revocar (soft-delete vía `is_active=False`, para permitir rotación sin downtime con 2 keys activas — sección 10.2 del CLAUDE.md).
+
+**Middleware de tenant extendido**: ahora resuelve tanto JWT (admin) como API keys (`sk_...`) desde el mismo header `Authorization: Bearer`. La resolución de API key vive en `app/services/api_keys.py` y corre con su propia sesión de DB (el middleware no tiene acceso a la sesión inyectada por `Depends`).
+
+**Scopes y rate limit** (`app/api/deps.py::require_scope`, `app/api/rate_limit.py::enforce_rate_limit`): `require_scope("catalog:read")` solo aplica cuando la request viene autenticada con API key (las requests admin por JWT no están limitadas por scopes de API key). El rate limit es ventana fija de 60s en Redis (`tenant:{company_id}:ratelimit:{api_key_id}:{window}`), y **siempre** deja los headers `X-RateLimit-Limit/-Remaining/-Reset` en la respuesta (sección 10.7 del CLAUDE.md), no solo cuando se excede.
+
+**Endpoints públicos de solo lectura**: `/api/v1/public/company`, `/services`, `/products`, `/promotions`, `/faq` — vía un factory genérico (`_public_list.py`, mismo patrón que el CRUD admin de la Fase 2). Todos requieren scope `catalog:read` y pasan por rate limit.
+
+**Endpoint admin `/api/v1/admin/company`** (GET/PATCH): antes no había forma de leer/editar los datos de la propia empresa vía API — quedaba huérfano desde la Fase 2.
+
+**Migración 0002**: tabla `api_keys`.
+
+### Bugs encontrados y corregidos
+
+1. **Aislamiento de tests roto para lo que pasa por middleware**: `resolve_api_key` usaba `async_session_factory` importado por nombre desde `app.db.session` — el `from X import Y` copia la referencia al momento del import, así que reasignar el atributo del módulo después (como hace el fixture de test para apuntar a la DB de prueba) no tenía efecto ahí. Se cambió a `import app.db.session as db_session` + `db_session.async_session_factory(...)` (acceso por atributo, evaluado en cada llamada) para que sí sea reemplazable desde `conftest.py`.
+2. **mypy strict**: una variable `error` se usaba con dos subclases distintas de `DomainError` en las dos ramas del middleware sin anotación explícita — mypy infería el tipo de la primera asignación y fallaba en la segunda. Se agregó `error: DomainError`.
+3. **500 en producción con cualquier API key válida** (el más importante, no lo agarró la suite de tests): `expires_at` y `last_used_at` en el modelo `ApiKey` no tenían `DateTime(timezone=True)` explícito — a diferencia de `TimestampMixin`, que sí lo tiene para `created_at`/`updated_at`. SQLAlchemy mapeaba la columna como *naive* (sin tz), pero el código escribe `datetime.now(UTC)` (con tz) → Postgres rechazaba el UPDATE. **SQLite no distingue esto**, así que los tests en memoria pasaban perfecto y el bug solo apareció al hacer smoke test contra Postgres real en producción. Lección: cualquier columna de fecha/hora nueva en un modelo necesita `DateTime(timezone=True)` explícito, no alcanza con el type hint `datetime`.
+
+### Estado verificado en producción (2026-08-04)
+
+Flujo completo probado contra `https://api-ia.riava.cl` (datos de prueba limpiados después): registro → crear servicio (admin/JWT) → crear API key con scope `catalog:read` → `GET /public/services` y `GET /public/company` con la key → 200, datos correctos, headers `X-RateLimit-*` presentes → key inválida → 401 `invalid_api_key`.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 3)
+
+- [ ] Endpoint `POST /api/v1/public/chat` y el motor de IA (intención → consulta → respuesta) — sigue siendo el hueco más grande: hoy un tercero puede *leer* el catálogo pero no puede conversar con el asistente, que es el producto en sí.
+- [ ] Webhooks salientes (sección 10.6) — no implementado en absoluto todavía.
+- [ ] Endpoint `POST /api/v1/public/schedule` (horarios) — los otros 4 recursos públicos (company/services/products/promotions/faq) están, pero horarios (branches + business_hours + schedule_exceptions) quedó afuera de esta fase por tiempo.
+- [ ] IP allowlist de API keys: el campo no existe todavía en el modelo (CLAUDE.md lo menciona como opcional) — no es bloqueante.
+- [ ] Plugin Manager (`/plugins_runtime`) y primer plugin de ejemplo.
+- [ ] Pantallas reales del panel administrativo (sigue siendo el dashboard placeholder).
+- [ ] Endpoint de logout / invalidación de refresh tokens.
+- [ ] Idempotency-Key en POSTs (sección 10.7) — hoy la API pública es solo lectura, así que no es urgente; sí lo será cuando exista `/public/chat`.
 - [ ] Considerar mover secretos de producción a un gestor (hoy el `.env` del servidor se armó a mano vía SSH).
