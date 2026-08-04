@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from sqlalchemy import DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKeyMixin
@@ -26,8 +27,8 @@ class ApiKey(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
     """Lista separada por comas, ver API_KEY_SCOPES."""
     rate_limit_per_minute: Mapped[int] = mapped_column(default=60)
     is_active: Mapped[bool] = mapped_column(default=True)
-    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    last_used_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @property
     def scopes_list(self) -> list[str]:
