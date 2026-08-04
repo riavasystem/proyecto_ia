@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
 from app.api.v1.routes import (
+    api_keys,
     auth,
     branches,
+    company,
     faqs,
     policies,
     products,
@@ -13,6 +15,8 @@ from app.api.v1.routes import (
 
 router = APIRouter(prefix="/admin")
 router.include_router(auth.router)
+router.include_router(company.router)
+router.include_router(api_keys.router)
 router.include_router(services.router)
 router.include_router(products.router)
 router.include_router(branches.router)

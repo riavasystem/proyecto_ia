@@ -1,4 +1,7 @@
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import UUID
 
 import jwt
@@ -8,6 +11,8 @@ from argon2.exceptions import VerifyMismatchError
 from app.core.config import get_settings
 
 _hasher = PasswordHasher()
+
+ApiKeyEnvironment = Literal["live", "test"]
 
 
 def hash_password(password: str) -> str:
@@ -50,3 +55,18 @@ def create_refresh_token(user_id: UUID, company_id: UUID) -> str:
 def decode_token(token: str) -> dict[str, str]:
     settings = get_settings()
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+
+def generate_api_key(environment: ApiKeyEnvironment) -> str:
+    return f"sk_{environment}_{secrets.token_urlsafe(32)}"
+
+
+def hash_api_key(key: str) -> str:
+    """SHA-256, no Argon2: necesitamos buscar la key por hash en cada request
+    (lookup determinístico), no solo verificarla contra un candidato."""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def api_key_display_prefix(key: str) -> str:
+    """Los primeros caracteres, seguros de mostrar en el panel para identificar la key."""
+    return key[:16]

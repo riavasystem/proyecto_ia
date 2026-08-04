@@ -1,3 +1,4 @@
+from app.models.api_key import ApiKey
 from app.models.branch import Branch
 from app.models.company import Company
 from app.models.faq import FAQ
@@ -10,6 +11,7 @@ from app.models.user import User
 
 __all__ = [
     "FAQ",
+    "ApiKey",
     "Branch",
     "BusinessHour",
     "Company",
