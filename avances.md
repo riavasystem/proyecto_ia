@@ -333,4 +333,40 @@ Contra `https://api-ia.riava.cl`: instalar "agenda" → `POST /public/chat` con 
 - [ ] Sistema de eventos/hooks del manifiesto (`message.received`, `conversation.closed`) — sigue sin conectarse a nada (Fase 5).
 - [ ] Migraciones de plugins versionadas, endpoint público de horarios, webhooks salientes, listado de conversaciones con cursor — pendientes de fases anteriores.
 - [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
-- [ ] Logout / invalidación de refresh tokens.
+
+---
+
+## 2026-08-04 (cont.) — Fase 8: logout con invalidación real de refresh tokens
+
+### Qué se creó
+
+Cerraba el último de los 4 pendientes que quedaban abiertos tras la Fase 6. El botón "Cerrar sesión" del panel solo borraba el token del `localStorage`; el refresh token seguía siendo válido en el servidor indefinidamente (hasta su expiración natural de 30 días), y `/auth/refresh` tampoco rotaba de verdad pese a que la sección 2 del CLAUDE.md pide explícitamente "refresh token rotativo".
+
+- **`app/core/security.py`**: los tokens (access y refresh) ahora llevan un claim `jti` (identificador único por token).
+- **`app/services/token_revocation.py`** (nuevo): `revoke_refresh_token`/`is_refresh_token_revoked`, respaldados en Redis con la key `tenant:{company_id}:revoked_refresh:{jti}` — TTL igual al tiempo que le quedaba al token para expirar de todas formas, así Redis nunca acumula basura.
+- **`POST /admin/auth/logout`** (nuevo): revoca el refresh token recibido. Idempotente — un token ya inválido, expirado o basura no es un error, simplemente no hay nada que revocar (devuelve 204 igual).
+- **`POST /admin/auth/refresh`**: ahora rota de verdad. Antes de emitir el par nuevo, revoca el `jti` del refresh token usado — si alguien intenta reutilizarlo (robado o reenviado por error), el servidor lo rechaza con 401.
+- **Frontend**: `logout()` en `auth-context.tsx` llama a `/auth/logout` con el refresh token (best-effort, no bloquea el cierre de sesión local si la red falla) antes de limpiar el `localStorage`.
+
+### Bug de infraestructura de tests descubierto: singleton de Redis atado al event loop
+
+`get_redis()` cacheaba un único cliente a nivel de módulo. Nunca había sido un problema porque **ningún test anterior ejercitaba Redis de verdad** (`enforce_rate_limit` se overridea a un no-op en `conftest.py`, y el único otro punto que toca Redis — `ctx.cache` en los plugins — no lo usa el plugin "agenda"). Al agregar el primer test real contra Redis (`test_logout_invalidates_refresh_token`), saltó `RuntimeError: Event loop is closed`: cada test de `pytest-asyncio` corre en su propio event loop, y un cliente creado en el loop de un test queda inválido en el siguiente.
+
+Se probó primero cerrar el cliente viejo prolijamente (`await _redis.aclose()`) antes de descartarlo — pero cerrar requiere el loop original, que para ese momento ya está destruido, así que fallaba con el mismo error dentro del propio cleanup. Solución final: `reset_redis()` simplemente descarta la referencia sin intentar cerrarla (no hay leak real entre tests de un proceso corto), llamado al inicio del fixture `client` en `conftest.py`.
+
+**CI ahora levanta un servicio Redis real** (`redis:7-alpine`) para el job de backend — antes no hacía falta porque nada lo tocaba.
+
+### Estado verificado en producción (2026-08-04)
+
+Contra `https://api-ia.riava.cl`: registro → `refresh` (rota, el token nuevo es distinto) → reintentar el refresh token original → **401** (ya no sirve) → `logout` con el refresh vigente → **204** → intentar `refresh` de nuevo con ese mismo token → **401**. Los cuatro pasos se comportaron exactamente como se esperaba. Datos de prueba limpiados (las keys de revocación en Redis expiran solas por TTL, no requieren limpieza manual).
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 8)
+
+Con esto quedan cerrados los 4 puntos pendientes que se identificaron al final de la Fase 6. Lo que sigue abierto (acumulado de fases anteriores):
+
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Migraciones de plugins versionadas, hooks/eventos del manifiesto, webhooks salientes, endpoint público de horarios, listado de conversaciones con cursor (Fases 3, 5, 7).
+- [ ] Generalizar `chat_triggers` a otros plugins más allá de "agenda"; pulir el filtrado de palabras de relleno en el parser de `agenda._handle_chat` (Fase 7).
+- [ ] Revocar también el access token vigente en logout (hoy solo se revoca el refresh; el access sigue funcionando hasta su expiración natural de ~15 min, que es la razón de ser de que sea corto — se documenta como decisión, no como bug, pero vale la pena reconsiderar si en algún momento se necesita "cerrar sesión en todos los dispositivos" de forma inmediata).
+- [ ] Migrar el motor de IA a un LLM real (Claude API) si el usuario lo decide más adelante.
+- [ ] Mover secretos de producción a un gestor.
