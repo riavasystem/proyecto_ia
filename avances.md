@@ -144,7 +144,7 @@ Flujo completo probado contra `https://api-ia.riava.cl` (datos de prueba limpiad
 
 ### Pendiente / próximos pasos sugeridos (al cierre de la Fase 3)
 
-- [ ] Endpoint `POST /api/v1/public/chat` y el motor de IA (intención → consulta → respuesta) — sigue siendo el hueco más grande: hoy un tercero puede *leer* el catálogo pero no puede conversar con el asistente, que es el producto en sí.
+- [x] ~~Endpoint `POST /api/v1/public/chat` y el motor de IA~~ — hecho, ver entrada siguiente.
 - [ ] Webhooks salientes (sección 10.6) — no implementado en absoluto todavía.
 - [ ] Endpoint `POST /api/v1/public/schedule` (horarios) — los otros 4 recursos públicos (company/services/products/promotions/faq) están, pero horarios (branches + business_hours + schedule_exceptions) quedó afuera de esta fase por tiempo.
 - [ ] IP allowlist de API keys: el campo no existe todavía en el modelo (CLAUDE.md lo menciona como opcional) — no es bloqueante.
@@ -152,4 +152,51 @@ Flujo completo probado contra `https://api-ia.riava.cl` (datos de prueba limpiad
 - [ ] Pantallas reales del panel administrativo (sigue siendo el dashboard placeholder).
 - [ ] Endpoint de logout / invalidación de refresh tokens.
 - [ ] Idempotency-Key en POSTs (sección 10.7) — hoy la API pública es solo lectura, así que no es urgente; sí lo será cuando exista `/public/chat`.
+- [ ] Considerar mover secretos de producción a un gestor (hoy el `.env` del servidor se armó a mano vía SSH).
+
+---
+
+## 2026-08-04 (cont.) — Fase 4: motor de IA heurístico + `POST /api/v1/public/chat`
+
+### Decisión de arquitectura (consultada con el usuario)
+
+El CLAUDE.md prohíbe RAG/embeddings/fine-tuning pero no prohíbe usar un LLM para redactar la respuesta a partir de datos ya consultados en Postgres (eso es tool-use, no RAG). Se ofrecieron dos caminos: LLM real (Claude API, requiere `ANTHROPIC_API_KEY` del usuario) o heurística sin LLM. **El usuario eligió arrancar con la heurística** — cero costo, cero dependencias externas, funciona hoy. Queda migrable a un LLM real después sin romper el contrato público, porque `/public/chat` no expone nada de la implementación interna (mismo request/response shape).
+
+### Qué se creó
+
+**`app/ai/`** (motor de IA, sección 7 del CLAUDE.md):
+- `intent.py`: clasificación por palabras clave contra el mensaje (con fold de acentos vía `unicodedata`), categorías: greeting, schedule, services, products, promotions, policies, faq, unknown.
+- `faq_matcher.py`: antes de clasificar por keywords, intenta matchear el mensaje contra las preguntas de FAQ reales del tenant por superposición de palabras significativas (con stopwords en español) — si hay match fuerte (≥50% de las palabras de la pregunta), gana sobre cualquier categoría genérica.
+- `responder.py`: templates de respuesta en español que arman el texto a partir de los objetos reales (Service, Product, BusinessHour, Promotion, Policy) — nunca texto libre inventado, todo sale de lo que devuelve la query.
+- `engine.py`: orquesta todo — `process_message(db, company_id, message) -> AIReply(intent, text)`.
+
+**Modelos nuevos**: `Contact` (usuario final del tercero vía `external_id`, con `external_metadata` JSON — nunca se le pide que se registre en la plataforma, sección 10.5), `Conversation` (contact_id, channel, status, assigned_operator_id nullable para operadores humanos a futuro), `Message` (role, content, intent detectado).
+
+**`POST /api/v1/public/chat`** (scope `chat:write`): resuelve/crea `Contact` por `(company_id, external_id)`, resuelve o crea `Conversation` (si mandan `conversation_id` la reutiliza), guarda el mensaje del usuario, corre el motor, guarda la respuesta, devuelve `{conversation_id, reply}`.
+
+**`GET /api/v1/public/conversations/{id}`** (scope `conversations:read`) y **`POST .../close`** (scope `chat:write`).
+
+**Admin `/api/v1/admin/conversations`** (list + detail, JWT) para que el panel pueda mostrar el historial — sección 9 del CLAUDE.md.
+
+**Migración 0003**: `contacts`, `conversations`, `messages`.
+
+### Bugs de mypy corregidos (no afectaban runtime, solo el gate de CI)
+
+1. `dict | None` sin parámetros de tipo en 3 archivos (`Contact.external_metadata`, `ChatRequest.external_metadata`, un parámetro interno) → `dict[str, Any] | None`.
+2. En `engine.py`, la variable `result` se reasignaba con el resultado de queries a modelos distintos (Service, luego Product, luego BusinessHour...) en ramas `if` separadas del mismo `async def`. mypy infiere el tipo de una variable local por su **primera** asignación en la función y no lo re-infiere en asignaciones posteriores con un tipo distinto, así que las ramas después de la primera tiraban error de tipo incompatible. Se corrigió usando un nombre de variable distinto por rama (`services_result`, `products_result`, etc.) — lección general: no reusar el mismo nombre de variable para resultados de queries de tipos distintos dentro de la misma función.
+
+### Estado verificado en producción (2026-08-04)
+
+Flujo completo contra `https://api-ia.riava.cl` (datos de prueba limpiados después): crear servicio real → crear API key con scopes `chat:write`+`conversations:read` → `POST /public/chat` con "Hola, buenas!" → responde saludando **con el nombre real de la empresa** → segundo mensaje "cuánto cuesta el corte?" en la misma conversación → responde citando **el servicio y precio reales** del catálogo → `GET /public/conversations/{id}` → historial completo con 4 mensajes (2 usuario + 2 asistente, con `intent` guardado en cada respuesta del asistente).
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 4)
+
+- [ ] `GET /api/v1/public/conversations` (listado) — no se implementó porque el CLAUDE.md exige paginación por cursor en listados públicos (sección 10.7) y no alcanzó el tiempo para hacerla bien; mejor no implementarla que implementarla violando el contrato.
+- [ ] Endpoint público de horarios (`/public/schedule`) — sigue pendiente de la Fase 3.
+- [ ] Webhooks salientes (sección 10.6) — sería el momento natural de emitir `message.received`/`message.replied` desde `/public/chat`.
+- [ ] Migrar el motor de IA a un LLM real (Claude API) cuando el usuario decida — el contrato público no cambia, solo la implementación interna de `app/ai/engine.py`.
+- [ ] Plugin Manager (`/plugins_runtime`) y primer plugin de ejemplo — con esto, el motor de IA podría "Ejecutar el plugin correspondiente" (sección 7), que hoy no existe en absoluto.
+- [ ] Pantallas reales del panel administrativo, incluyendo una vista de conversaciones (ya hay API: `/admin/conversations`).
+- [ ] Endpoint de logout / invalidación de refresh tokens.
+- [ ] Idempotency-Key en `POST /public/chat` (sección 10.7) — ahora que existe un POST público que crea recursos, esto empieza a ser relevante de verdad.
 - [ ] Considerar mover secretos de producción a un gestor (hoy el `.env` del servidor se armó a mano vía SSH).
