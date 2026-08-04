@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
+import { useIsMounted } from "@/lib/use-is-mounted";
 
 interface ApiKey {
   id: string;
@@ -34,15 +35,21 @@ export default function ApiKeysPage() {
   const [environment, setEnvironment] = useState<"live" | "test">("test");
   const [scopes, setScopes] = useState<string[]>([]);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const isMounted = useIsMounted();
 
   async function load() {
     try {
-      setKeys(await apiFetch<ApiKey[]>("/api/v1/admin/api-keys"));
-      setError(null);
+      const data = await apiFetch<ApiKey[]>("/api/v1/admin/api-keys");
+      if (isMounted.current) {
+        setKeys(data);
+        setError(null);
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo cargar");
+      if (isMounted.current) {
+        setError(err instanceof ApiError ? err.message : "No se pudo cargar");
+      }
     } finally {
-      setIsLoading(false);
+      if (isMounted.current) setIsLoading(false);
     }
   }
 

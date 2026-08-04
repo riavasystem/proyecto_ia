@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
+import { useIsMounted } from "@/lib/use-is-mounted";
 
 export interface FieldConfig<T> {
   name: keyof T & string;
@@ -29,18 +30,23 @@ export function CrudPage<T extends { id: string }>({
   const [form, setForm] = useState<Record<string, unknown>>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isMounted = useIsMounted();
 
   const load = useCallback(async () => {
     try {
       const data = await apiFetch<T[]>(resourcePath);
-      setItems(data);
-      setError(null);
+      if (isMounted.current) {
+        setItems(data);
+        setError(null);
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo cargar la lista");
+      if (isMounted.current) {
+        setError(err instanceof ApiError ? err.message : "No se pudo cargar la lista");
+      }
     } finally {
-      setIsLoading(false);
+      if (isMounted.current) setIsLoading(false);
     }
-  }, [resourcePath]);
+  }, [resourcePath, isMounted]);
 
   useEffect(() => {
     void load();

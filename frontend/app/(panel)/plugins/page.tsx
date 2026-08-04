@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
+import { useIsMounted } from "@/lib/use-is-mounted";
 
 interface PluginManifest {
   name: string;
@@ -28,15 +29,21 @@ export default function PluginsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const isMounted = useIsMounted();
 
   async function load() {
     try {
-      setItems(await apiFetch<PluginListItem[]>("/api/v1/admin/plugins"));
-      setError(null);
+      const data = await apiFetch<PluginListItem[]>("/api/v1/admin/plugins");
+      if (isMounted.current) {
+        setItems(data);
+        setError(null);
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo cargar");
+      if (isMounted.current) {
+        setError(err instanceof ApiError ? err.message : "No se pudo cargar");
+      }
     } finally {
-      setIsLoading(false);
+      if (isMounted.current) setIsLoading(false);
     }
   }
 
