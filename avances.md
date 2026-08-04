@@ -301,3 +301,36 @@ Durante esta fase la máquina volvió a ser lenta para `npm run lint`/`typecheck
 - [ ] El motor de IA (`app/ai/engine.py`) sigue sin invocar plugins automáticamente — pendiente de Fase 5.
 - [ ] Migraciones de plugins versionadas, hooks/eventos, endpoint público de horarios, webhooks salientes, listado de conversaciones con cursor — todo pendiente de fases anteriores.
 - [ ] Logout / invalidación de refresh tokens (el botón "Cerrar sesión" del panel solo borra el token local, no lo invalida en el servidor).
+
+---
+
+## 2026-08-04 (cont.) — Fase 7: el motor de IA ejecuta plugins automáticamente
+
+### Qué se creó
+
+Resuelve el pendiente de la sección 7 del CLAUDE.md ("determinar si debe ejecutarse un plugin") que quedó abierto desde la Fase 5: `/public/chat` y `/public/plugins/{name}/execute` eran caminos completamente separados — el tercero tenía que saber que el plugin existía y llamarlo él mismo.
+
+- **`PluginManifest.chat_triggers: list[str]`** (`app/plugins_runtime/interface.py`): palabras clave que un plugin declara en su `manifest.json` para indicarle al motor de IA cuándo delegarle la respuesta. El Core sigue sin conocer la lógica de ningún plugin — solo compara texto (con fold de acentos, reutilizando `app.ai.intent.fold`) contra una lista declarada.
+- **`app/ai/engine.py`**: nueva función `_try_plugins()`, llamada después del match de FAQ y antes de la clasificación por categorías genéricas. Busca los plugins **instalados y habilitados** del tenant (`InstalledPlugin`), y si el mensaje matchea algún `chat_trigger`, llama a `plugin_manager.execute(..., "chat", {"message": message})` y usa `PluginResult.message` como respuesta. Si el plugin no tiene éxito o no matchea nada, cae al flujo normal — un plugin roto o sin match nunca deja al usuario sin respuesta.
+- **Nuevo `Intent.PLUGIN`** en `app/ai/intent.py`, para que el historial de conversación (`Message.intent`) registre que una respuesta vino de un plugin y no de una categoría genérica.
+- **Plugin "agenda" — acción `"chat"`**: reconoce una fecha/hora en formato `AAAA-MM-DD HH:MM` dentro del mensaje libre con una regex; si la encuentra, crea la reserva real y confirma en lenguaje natural; si no, responde pidiendo el formato concreto. Deliberadamente simple (sin LLM), consistente con la decisión de arquitectura de la Fase 4.
+- Tests nuevos en `tests/test_chat.py`: delega correctamente cuando el plugin está instalado y el mensaje matchea, cae al flujo genérico si no hay match, y no inventa una reserva si el plugin ni siquiera está instalado (aunque el mensaje use la palabra "reservar").
+
+### Nota de implementación: `fold()` se volvió público
+
+`app/ai/intent.py` tenía `_fold()` (privado) para el matching de intención por keywords. Se renombró a `fold()` (público) porque ahora `engine.py` también lo necesita para comparar el mensaje contra los `chat_triggers` — evita duplicar la lógica de normalización de acentos en dos lugares.
+
+### Estado verificado en producción (2026-08-04)
+
+Contra `https://api-ia.riava.cl`: instalar "agenda" → `POST /public/chat` con `"quiero reservar un Corte 2026-09-01 15:00"` → responde `"Listo, agendé 'quiero un Corte' para el 2026-09-01 15:00."` y la reserva queda realmente creada (verificado con `list_bookings`) → un segundo mensaje sin trigger ("hola buenas") sigue cayendo en el saludo genérico normal. Datos de prueba limpiados después.
+
+**Detalle cosmético detectado**: el parser de `service_name` en el plugin agenda no filtra bien palabras de relleno como "quiero" o "un" (solo filtra los `_TRIGGER_WORDS` explícitos) — el ejemplo de arriba guardó `"quiero un Corte"` en vez de `"Corte"`. No es un bug funcional (la reserva se crea correctamente), pero vale la pena pulir la lista de stopwords del plugin si se usa en un caso real.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 7)
+
+- [ ] Pulir el filtrado de palabras de relleno en el parser de `agenda._handle_chat` (detalle cosmético, no bloqueante).
+- [ ] Generalizar `chat_triggers` a otros plugins futuros más allá de "agenda" (el mecanismo ya es genérico, solo falta que otro plugin lo use).
+- [ ] Sistema de eventos/hooks del manifiesto (`message.received`, `conversation.closed`) — sigue sin conectarse a nada (Fase 5).
+- [ ] Migraciones de plugins versionadas, endpoint público de horarios, webhooks salientes, listado de conversaciones con cursor — pendientes de fases anteriores.
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Logout / invalidación de refresh tokens.
