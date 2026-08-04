@@ -2,7 +2,8 @@ FROM python:3.13-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PLUGINS_DIR=/app/plugins
 
 WORKDIR /app
 
@@ -13,12 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-COPY pyproject.toml ./
+# El build context es la raíz del repo (no backend/), para poder copiar
+# también /plugins — ver .github/workflows/deploy-backend.yml.
+COPY backend/pyproject.toml ./
 RUN uv pip install --system --no-cache -e .
 
-COPY app ./app
-COPY migrations ./migrations
-COPY alembic.ini ./
+COPY backend/app ./app
+COPY backend/migrations ./migrations
+COPY backend/alembic.ini ./
+COPY plugins ./plugins
 
 EXPOSE 8000
 

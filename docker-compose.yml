@@ -27,7 +27,8 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     env_file:
       - ./backend/.env
     environment:
@@ -42,6 +43,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      - ./plugins:/app/plugins
 
 volumes:
   postgres_data:

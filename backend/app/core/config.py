@@ -22,6 +22,11 @@ class Settings(BaseSettings):
 
     api_v1_prefix: str = "/api/v1"
 
+    plugins_dir: str = Field(default="../plugins")
+    """Relativo a backend/ en desarrollo local; en Docker se sobreescribe con
+    una ruta absoluta vía la env var PLUGINS_DIR (ver backend/Dockerfile)."""
+    plugin_execution_timeout_seconds: float = Field(default=5.0)
+
 
 @lru_cache
 def get_settings() -> Settings:

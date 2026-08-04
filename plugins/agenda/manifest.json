@@ -1,0 +1,11 @@
+{
+  "name": "agenda",
+  "version": "1.0.0",
+  "author": "",
+  "description": "Agenda y reservas de citas para el negocio.",
+  "category": "productividad",
+  "dependencies": [],
+  "permissions": ["conversations.read", "agenda.write"],
+  "hooks": ["message.received", "conversation.closed"],
+  "screens": [{ "path": "/agenda", "label": "Agenda", "icon": "calendar" }]
+}

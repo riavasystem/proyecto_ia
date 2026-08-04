@@ -7,6 +7,7 @@ from app.api.v1.routes import (
     company,
     conversations_admin,
     faqs,
+    plugins_admin,
     policies,
     products,
     promotions,
@@ -26,3 +27,4 @@ router.include_router(promotions.router)
 router.include_router(policies.router)
 router.include_router(faqs.router)
 router.include_router(conversations_admin.router)
+router.include_router(plugins_admin.router)

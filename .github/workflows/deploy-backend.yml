@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "plugins/**"
       - "docker/docker-compose.prod.yml"
       - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
@@ -38,7 +39,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: backend
+          context: .
+          file: backend/Dockerfile
           push: true
           tags: |
             ${{ steps.meta.outputs.tag }}
