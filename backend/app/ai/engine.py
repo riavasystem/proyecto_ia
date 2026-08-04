@@ -7,14 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import responder
 from app.ai.faq_matcher import find_best_faq_match
-from app.ai.intent import Intent, detect_intent
+from app.ai.intent import Intent, detect_intent, fold
 from app.models.company import Company
 from app.models.faq import FAQ
+from app.models.installed_plugin import InstalledPlugin
 from app.models.policy import Policy
 from app.models.product import Product
 from app.models.promotion import Promotion
 from app.models.schedule import BusinessHour
 from app.models.service import Service
+from app.plugins_runtime.manager import manager as plugin_manager
+from app.plugins_runtime.registry import registry as plugin_registry
 
 
 @dataclass
@@ -23,14 +26,55 @@ class AIReply:
     text: str
 
 
+async def _try_plugins(db: AsyncSession, company_id: UUID, message: str) -> AIReply | None:
+    """Sección 7 del CLAUDE.md: "determinar si debe ejecutarse un plugin".
+    El Core no conoce la lógica de ningún plugin — solo compara el mensaje
+    contra los chat_triggers que cada plugin declaró en su manifiesto, y si
+    hay match delega la respuesta completa al plugin (acción "chat")."""
+    installed = (
+        (
+            await db.execute(
+                select(InstalledPlugin).where(
+                    InstalledPlugin.company_id == company_id,
+                    InstalledPlugin.is_enabled.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not installed:
+        return None
+
+    folded = fold(message)
+    for installation in installed:
+        plugin_manifest = plugin_registry.get_manifest(installation.plugin_name)
+        if plugin_manifest is None:
+            continue
+        if not any(fold(trigger) in folded for trigger in plugin_manifest.chat_triggers):
+            continue
+
+        result = await plugin_manager.execute(
+            db, company_id, installation.plugin_name, "chat", {"message": message}
+        )
+        if result.success and result.message:
+            return AIReply(intent=Intent.PLUGIN, text=result.message)
+    return None
+
+
 async def process_message(db: AsyncSession, company_id: UUID, message: str) -> AIReply:
-    """Intención → consultar información estructurada del tenant → construir
-    respuesta. Sin RAG, sin embeddings: todo sale de PostgreSQL filtrado por
-    company_id, según la sección 1 del CLAUDE.md."""
+    """Intención → consultar información estructurada del tenant → determinar
+    si debe ejecutarse un plugin → construir respuesta. Sin RAG, sin
+    embeddings: todo sale de PostgreSQL filtrado por company_id, según la
+    sección 1 del CLAUDE.md."""
     faqs = (await db.execute(select(FAQ).where(FAQ.company_id == company_id))).scalars().all()
     faq_match = find_best_faq_match(message, list(faqs))
     if faq_match is not None:
         return AIReply(intent=Intent.FAQ, text=responder.faq_reply(faq_match))
+
+    plugin_reply = await _try_plugins(db, company_id, message)
+    if plugin_reply is not None:
+        return plugin_reply
 
     intent = detect_intent(message)
 

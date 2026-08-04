@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -5,6 +6,9 @@ from typing import Any
 from sqlalchemy import text
 
 from app.plugins_runtime.interface import PluginContext, PluginManifest, PluginResult
+
+_DATETIME_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}")
+_TRIGGER_WORDS = {"reservar", "agendar", "agenda", "cita", "turno", "para", "el", "de"}
 
 # El plugin nunca importa módulos internos del Core fuera de app.plugins_runtime
 # (sección 8 del CLAUDE.md). sqlalchemy es una dependencia externa normal, no
@@ -20,6 +24,7 @@ manifest = PluginManifest(
     permissions=["conversations.read", "agenda.write"],
     hooks=["message.received", "conversation.closed"],
     screens=[{"path": "/agenda", "label": "Agenda", "icon": "calendar"}],
+    chat_triggers=["reservar", "agendar", "agenda", "cita", "turno"],
 )
 
 _TABLE = "plg_agenda_bookings"
@@ -56,7 +61,7 @@ class AgendaPlugin:
         pass
 
     async def check_permissions(self, ctx: PluginContext, action: str) -> bool:
-        return action in {"create_booking", "list_bookings"}
+        return action in {"create_booking", "list_bookings", "chat"}
 
     async def execute(
         self, ctx: PluginContext, action: str, payload: dict[str, Any]
@@ -65,7 +70,40 @@ class AgendaPlugin:
             return await self._create_booking(ctx, payload)
         if action == "list_bookings":
             return await self._list_bookings(ctx)
+        if action == "chat":
+            return await self._handle_chat(ctx, payload)
         return PluginResult(success=False, message=f"Acción desconocida: {action}")
+
+    async def _handle_chat(self, ctx: PluginContext, payload: dict[str, Any]) -> PluginResult:
+        """Entrada desde el motor de IA (app/ai/engine.py) cuando el mensaje
+        matchea uno de los chat_triggers del manifiesto. Parseo deliberadamente
+        simple: sin LLM, solo reconoce 'AAAA-MM-DD HH:MM' en el texto."""
+        message = str(payload.get("message", ""))
+        match = _DATETIME_PATTERN.search(message)
+        if match is None:
+            return PluginResult(
+                success=True,
+                message=(
+                    "Puedo ayudarte a agendar un turno. Decime el servicio y la fecha/hora "
+                    "en formato AAAA-MM-DD HH:MM, por ejemplo: 'reservar Corte 2026-09-01 15:00'."
+                ),
+            )
+
+        scheduled_at = match.group(0).replace(" ", "T")
+        remainder = (message[: match.start()] + message[match.end() :]).strip()
+        service_words = [w for w in remainder.split() if w.lower() not in _TRIGGER_WORDS]
+        service_name = " ".join(service_words).strip() or "Reserva"
+
+        result = await self._create_booking(
+            ctx, {"service_name": service_name, "scheduled_at": scheduled_at}
+        )
+        if not result.success:
+            return result
+        return PluginResult(
+            success=True,
+            message=f"Listo, agendé '{service_name}' para el {scheduled_at.replace('T', ' ')}.",
+            data=result.data,
+        )
 
     async def _create_booking(self, ctx: PluginContext, payload: dict[str, Any]) -> PluginResult:
         service_name = payload.get("service_name")

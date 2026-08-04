@@ -7,5 +7,6 @@
   "dependencies": [],
   "permissions": ["conversations.read", "agenda.write"],
   "hooks": ["message.received", "conversation.closed"],
-  "screens": [{ "path": "/agenda", "label": "Agenda", "icon": "calendar" }]
+  "screens": [{ "path": "/agenda", "label": "Agenda", "icon": "calendar" }],
+  "chat_triggers": ["reservar", "agendar", "agenda", "cita", "turno"]
 }

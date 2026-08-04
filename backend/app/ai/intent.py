@@ -13,6 +13,7 @@ class Intent(StrEnum):
     PROMOTIONS = "promotions"
     POLICIES = "policies"
     FAQ = "faq"
+    PLUGIN = "plugin"
     UNKNOWN = "unknown"
 
 
@@ -35,13 +36,13 @@ INTENT_KEYWORDS: dict[Intent, tuple[str, ...]] = {
 }
 
 
-def _fold(text: str) -> str:
+def fold(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text.lower())
     return "".join(c for c in normalized if not unicodedata.combining(c))
 
 
 def detect_intent(message: str) -> Intent:
-    folded = _fold(message)
+    folded = fold(message)
     for intent, keywords in INTENT_KEYWORDS.items():
         if any(keyword in folded for keyword in keywords):
             return intent

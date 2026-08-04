@@ -24,6 +24,12 @@ class PluginManifest(BaseModel):
     permissions: list[str] = []
     hooks: list[str] = []
     screens: list[PluginScreen] = []
+    chat_triggers: list[str] = []
+    """Palabras clave que, si aparecen en un mensaje entrante, hacen que el
+    motor de IA delegue la respuesta a este plugin (acción "chat") en vez de
+    usar las categorías genéricas. Mantiene al Core desacoplado de plugins
+    concretos (sección 8 del CLAUDE.md): el Core solo sabe matchear texto
+    contra una lista declarada, nunca conoce la lógica de negocio detrás."""
 
 
 @dataclass

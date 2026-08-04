@@ -142,6 +142,63 @@ async def test_close_conversation(client: AsyncClient) -> None:
     assert close_response.json()["status"] == "closed"
 
 
+async def test_chat_delegates_to_installed_plugin_with_matching_trigger(
+    client: AsyncClient,
+) -> None:
+    admin_token = await _register(client, "Peluquería Agenda Chat", "agenda-chat@example.com")
+    install = await client.post(
+        "/api/v1/admin/plugins/agenda/install", headers=_auth(admin_token)
+    )
+    assert install.status_code == 201, install.text
+    key = await _create_api_key(client, admin_token, scopes=["chat:write"])
+
+    response = await client.post(
+        "/api/v1/public/chat",
+        json={
+            "external_user_id": "user-1",
+            "message": "quiero reservar un Corte 2026-09-01 15:00",
+        },
+        headers=_auth(key),
+    )
+    assert response.status_code == 200, response.text
+    assert "agendé" in response.json()["reply"].lower()
+
+    bookings = await client.post(
+        "/api/v1/public/plugins/agenda/execute",
+        json={"action": "list_bookings", "payload": {}},
+        headers=_auth(await _create_api_key(client, admin_token, scopes=["plugins:execute"])),
+    )
+    assert len(bookings.json()["data"]["bookings"]) == 1
+
+
+async def test_chat_falls_back_when_no_plugin_trigger_matches(client: AsyncClient) -> None:
+    admin_token = await _register(client, "Peluquería Sin Match", "sin-match@example.com")
+    await client.post("/api/v1/admin/plugins/agenda/install", headers=_auth(admin_token))
+    key = await _create_api_key(client, admin_token, scopes=["chat:write"])
+
+    response = await client.post(
+        "/api/v1/public/chat",
+        json={"external_user_id": "user-1", "message": "hola, buenas"},
+        headers=_auth(key),
+    )
+    assert response.status_code == 200
+    assert "Peluquería Sin Match" in response.json()["reply"]
+
+
+async def test_chat_ignores_uninstalled_plugin_triggers(client: AsyncClient) -> None:
+    admin_token = await _register(client, "Peluquería Sin Plugin", "sin-plugin@example.com")
+    key = await _create_api_key(client, admin_token, scopes=["chat:write"])
+
+    response = await client.post(
+        "/api/v1/public/chat",
+        json={"external_user_id": "user-1", "message": "quiero reservar hora"},
+        headers=_auth(key),
+    )
+    assert response.status_code == 200
+    # Sin el plugin instalado, cae al flujo genérico (no inventa una reserva)
+    assert "agendé" not in response.json()["reply"].lower()
+
+
 async def test_admin_can_list_and_view_conversations(client: AsyncClient) -> None:
     admin_token = await _register(client, "Empresa Panel", "panel@example.com")
     key = await _create_api_key(client, admin_token, scopes=["chat:write"])

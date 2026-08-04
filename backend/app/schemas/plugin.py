@@ -15,6 +15,7 @@ class PluginManifestRead(BaseModel):
     permissions: list[str]
     hooks: list[str]
     screens: list[PluginScreen]
+    chat_triggers: list[str]
 
 
 class InstalledPluginRead(ReadBase):
