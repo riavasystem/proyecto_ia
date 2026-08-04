@@ -4,7 +4,7 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
-from app.core.exceptions import UnauthorizedError
+from app.core.exceptions import UnauthorizedError, domain_error_handler
 from app.core.security import decode_token
 
 PUBLIC_PATH_PREFIXES = ("/api/v1/public/health", "/docs", "/openapi.json", "/api/v1/openapi.json")
@@ -30,7 +30,11 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
                 payload = decode_token(token)
                 request.state.company_id = UUID(payload["company_id"])
                 request.state.user_id = UUID(payload["sub"])
-            except Exception as exc:
-                raise UnauthorizedError("Token inválido o expirado") from exc
+            except Exception:
+                # Se responde acá directamente (en vez de raise) porque este
+                # middleware corre por fuera del ExceptionMiddleware de Starlette:
+                # una excepción lanzada aquí no pasaría por domain_error_handler.
+                error = UnauthorizedError("Token inválido o expirado")
+                return await domain_error_handler(request, error)
 
         return await call_next(request)

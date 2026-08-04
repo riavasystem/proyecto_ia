@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Uuid, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -11,9 +10,7 @@ class Base(DeclarativeBase):
 
 
 class UUIDPrimaryKeyMixin:
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
 
 class TimestampMixin:
@@ -24,6 +21,4 @@ class TimestampMixin:
 
 
 class TenantMixin:
-    company_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), index=True, nullable=False
-    )
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
