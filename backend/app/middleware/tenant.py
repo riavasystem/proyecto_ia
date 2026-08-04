@@ -4,7 +4,12 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
-from app.core.exceptions import InvalidApiKeyError, UnauthorizedError, domain_error_handler
+from app.core.exceptions import (
+    DomainError,
+    InvalidApiKeyError,
+    UnauthorizedError,
+    domain_error_handler,
+)
 from app.core.security import decode_token
 from app.services.api_keys import resolve_api_key
 
@@ -31,6 +36,7 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
             # Se responde directamente con domain_error_handler (en vez de raise) porque
             # este middleware corre por fuera del ExceptionMiddleware de Starlette: una
             # excepción lanzada aquí no pasaría por los exception_handler registrados.
+            error: DomainError
             if token.startswith("sk_"):
                 api_key = await resolve_api_key(token)
                 if api_key is None:
