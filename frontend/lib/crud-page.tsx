@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
-import { useIsMounted } from "@/lib/use-is-mounted";
 
 export interface FieldConfig<T> {
   name: keyof T & string;
@@ -30,25 +29,24 @@ export function CrudPage<T extends { id: string }>({
   const [form, setForm] = useState<Record<string, unknown>>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const isMounted = useIsMounted();
 
   const load = useCallback(async () => {
     try {
       const data = await apiFetch<T[]>(resourcePath);
-      if (isMounted.current) {
-        setItems(data);
-        setError(null);
-      }
+      setItems(data);
+      setError(null);
     } catch (err) {
-      if (isMounted.current) {
-        setError(err instanceof ApiError ? err.message : "No se pudo cargar la lista");
-      }
+      setError(err instanceof ApiError ? err.message : "No se pudo cargar la lista");
     } finally {
-      if (isMounted.current) setIsLoading(false);
+      setIsLoading(false);
     }
-  }, [resourcePath, isMounted]);
+  }, [resourcePath]);
 
   useEffect(() => {
+    // Fetch-on-mount estándar: react-hooks/set-state-in-effect marca cualquier
+    // setState alcanzable desde el efecto, incluso detrás de un await — falso
+    // positivo conocido de esta regla para el patrón clásico de carga inicial.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

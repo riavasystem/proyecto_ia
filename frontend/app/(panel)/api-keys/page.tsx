@@ -2,7 +2,6 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch, ApiError } from "@/lib/api";
-import { useIsMounted } from "@/lib/use-is-mounted";
 
 interface ApiKey {
   id: string;
@@ -35,25 +34,21 @@ export default function ApiKeysPage() {
   const [environment, setEnvironment] = useState<"live" | "test">("test");
   const [scopes, setScopes] = useState<string[]>([]);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
-  const isMounted = useIsMounted();
 
   async function load() {
     try {
-      const data = await apiFetch<ApiKey[]>("/api/v1/admin/api-keys");
-      if (isMounted.current) {
-        setKeys(data);
-        setError(null);
-      }
+      setKeys(await apiFetch<ApiKey[]>("/api/v1/admin/api-keys"));
+      setError(null);
     } catch (err) {
-      if (isMounted.current) {
-        setError(err instanceof ApiError ? err.message : "No se pudo cargar");
-      }
+      setError(err instanceof ApiError ? err.message : "No se pudo cargar");
     } finally {
-      if (isMounted.current) setIsLoading(false);
+      setIsLoading(false);
     }
   }
 
   useEffect(() => {
+    // Falso positivo conocido de react-hooks/set-state-in-effect para fetch-on-mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, []);
 
