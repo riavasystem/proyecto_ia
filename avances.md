@@ -587,6 +587,33 @@ Contra `https://api-ia.riava.cl` con el commit `ad6b642` desplegado: `pg_constra
 - [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`.
 - [ ] Cifrado en reposo del secreto del webhook.
 - [ ] Evento `handoff.requested` sin flujo que lo dispare.
-- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Pantallas de Usuarios/RBAC, Canales, Configuración en el panel (Fase 6) — Horarios/Sucursales se resuelve en la Fase 11e, a continuación.
 - [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5, distinto de los webhooks salientes).
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
+
+---
+
+## 2026-08-05 (cont.) — Fase 11e: pantalla de Horarios y sucursales en el panel
+
+### Qué se creó
+
+De las pantallas pendientes de la Fase 6, esta era la más barata de cerrar: el backend ya existía completo (`branches.py` y `schedule.py`, con CRUD genérico vía `build_crud_router`), solo faltaba el panel. `frontend/app/(panel)/horarios/page.tsx` junta tres secciones en una sola pantalla: **Sucursales** (CRUD directo), **Horario semanal** (día + hora de apertura/cierre por sucursal) y **Excepciones** (feriados, cierres puntuales, con motivo).
+
+- Se extendió `lib/crud-page.tsx`: los `FieldConfig` ahora soportan `type: "select"` (con `options`) y `type: "time"` (`<input type="time">`), necesarios para elegir la sucursal y el día de la semana, y para cargar horarios sin que el usuario tenga que escribir el formato a mano.
+- Se extrajo `CrudSection` del `CrudPage` original: `CrudPage` (usado por `servicios`, `productos`, etc.) sigue funcionando idéntico por fuera, pero ahora es un wrapper delgado sobre `CrudSection`, que no trae su propio `<main>`. Esto permite combinar varias tablas CRUD en una sola pantalla (como acá) sin anidar `<main>` tres veces.
+- La sección de horario semanal y excepciones no se habilita hasta que exista al menos una sucursal (el `branch_id` es obligatorio en el backend y no tiene sentido cargar horarios sin saber de qué sucursal).
+
+### Estado verificado en producción (2026-08-05)
+
+CI en verde para el commit `ed53573`, deploy a `https://proyecto-ia-wheat.vercel.app/horarios` confirmado (200, mismo patrón de carga que el resto de las pantallas). Se probó contra `https://api-ia.riava.cl` la secuencia exacta de llamadas que hace la pantalla: crear sucursal → listar (para poblar el selector) → crear horario semanal (con `day_of_week` enviado como string desde el `<select>`, Pydantic lo coerciona a `int` sin problema) → crear excepción → listar ambos → y se confirmó que `GET /public/schedule` (el endpoint que de verdad usa el asistente de IA para responder, ya construido en la Fase 9) refleja los datos cargados desde el panel de punta a punta. Limpieza: un solo `DELETE FROM companies` borró la empresa, la sucursal, el horario, la excepción, la API key y el usuario de prueba — primera vez en la sesión que la limpieza de datos de prueba fue de un solo paso, gracias a la FK con cascada de la Fase 11d.
+
+Igual que con la pantalla de webhooks (Fase 11c), no hay herramienta de automatización de navegador en esta sesión, así que no se hizo una pasada de clicks reales — se lo digo explícito en vez de dar la UI por probada visualmente.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11e)
+
+- [ ] Verificación visual real en navegador de las pantallas de webhooks y horarios (no se pudo hacer en esta sesión).
+- [ ] Pantallas de Usuarios/RBAC, Canales, Configuración en el panel (Fase 6) — las que quedan.
+- [ ] Extender la FK con cascada a las tablas de plugins (Fase 11d, pendiente para "agenda").
+- [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`; cifrado en reposo del secreto del webhook; evento `handoff.requested` sin flujo que lo dispare.
+- [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5).
 - [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
