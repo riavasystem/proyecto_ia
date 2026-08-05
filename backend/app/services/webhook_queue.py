@@ -38,9 +38,10 @@ async def _promote_due_retries() -> None:
     now = time.time()
     due = await redis.zrangebyscore(SCHEDULED_KEY, "-inf", now)
     for raw_id in due:
+        member = str(raw_id)
         async with redis.pipeline(transaction=True) as pipe:
-            await pipe.zrem(SCHEDULED_KEY, raw_id)
-            await pipe.rpush(READY_KEY, raw_id)
+            await pipe.zrem(SCHEDULED_KEY, member)
+            await pipe.rpush(READY_KEY, member)
             await pipe.execute()
 
 
@@ -125,6 +126,6 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             continue
         _, raw_id = popped
         try:
-            await _process_one(UUID(raw_id))
+            await _process_one(UUID(str(raw_id)))
         except Exception:
-            logger.exception("webhook_delivery_worker_error", delivery_id=raw_id)
+            logger.exception("webhook_delivery_worker_error", delivery_id=str(raw_id))
