@@ -445,3 +445,42 @@ Contra `https://api-ia.riava.cl`: instalar "agenda" en un tenant nuevo → la mi
 - [ ] Migrar el motor de IA a un LLM real si el usuario lo decide.
 - [ ] Mover secretos de producción a un gestor.
 - [ ] `docs/openapi.json` sin generar/validar en CI.
+
+---
+
+## 2026-08-05 (cont.) — Fase 11: webhooks salientes (sección 10.6)
+
+### Qué se creó
+
+Era el hueco de integración más grande que quedaba: hasta ahora un proyecto externo tenía que hacer *polling* de la API para enterarse de mensajes nuevos o conversaciones cerradas. Ahora el Core avisa proactivamente.
+
+- **`WebhookEndpoint`** (admin CRUD completo: crear con selección de eventos, listar, `PATCH` para editar/activar-desactivar, borrar) y **`WebhookDelivery`** (log de entregas por endpoint, `GET /admin/webhooks/{id}/deliveries`).
+- **Eventos soportados**: `message.received`, `message.replied`, `conversation.started`, `conversation.closed`, `plugin.executed` — los cinco que ya menciona la sección 10.6 del CLAUDE.md que aplican al Core hoy (`handoff.requested` queda declarado en `WEBHOOK_EVENTS` pero todavía no hay ningún flujo de handoff a operador humano que lo dispare).
+- **Firma HMAC-SHA256** sobre `"{timestamp}.{body}"`, en headers `X-Signature` + `X-Timestamp` — protección contra replay tal como pide la sección 10.6. Cada entrega lleva un `event_id` único (UUID) para que el receptor deduplique.
+- **`app/services/webhooks.py`**: `emit_event()` crea una `WebhookDelivery` por cada endpoint activo del tenant suscripto a ese evento, y programa el envío real vía `BackgroundTasks` de FastAPI (corre después de que la respuesta HTTP ya se mandó, no bloquea la latencia del endpoint que disparó el evento). `_deliver_with_retries()` reintenta hasta 3 veces con backoff 2s/10s/30s; si todos los intentos fallan, la entrega queda en estado `dead_letter`.
+- Integrado en `chat.py` (los tres eventos de conversación/mensaje) y `plugins_public.py` (`plugin.executed`).
+
+### Limitación documentada a propósito: no es una cola persistente todavía
+
+La sección 10.6 pide "cola en Redis, DLQ y log de entregas visible en el panel". Se implementó el **log de entregas** (vía API; falta la pantalla del panel) y un **DLQ lógico** (estado `dead_letter` en la misma tabla, sin cola separada), pero los reintentos corren **en el mismo proceso** que atendió la request original, vía `BackgroundTasks` — no en una cola de Redis con un worker separado. Consecuencia concreta: si el proceso del backend se reinicia a mitad de un reintento (entre el intento 1 y el 2, por ejemplo), ese reintento pendiente se pierde silenciosamente — la entrega queda con `status="pending"` para siempre, sin que nada la vuelva a tomar. Es un MVP funcional y honesto sobre sus límites, no la versión final que describe el CLAUDE.md.
+
+### Otras decisiones de alcance
+
+- Solo expuesto bajo `/admin` (JWT) por ahora. El scope `webhooks:manage` ya existe en `API_KEY_SCOPES` desde la Fase 3, pero gestionar webhooks vía `/public` con ese scope (para que un tercero configure sus propios webhooks sin pasar por el panel) queda pendiente.
+- El secreto del webhook se guarda en texto plano en la base — a diferencia de una API key (que se guarda hasheada porque solo hay que *verificarla*), el secreto de un webhook hay que poder *reproducirlo* para firmar cada entrega. Cifrarlo en reposo queda en el mismo nivel de madurez que el resto del manejo de secretos del proyecto (pendiente, ver Fase 1).
+- Sin pantalla en el panel administrativo todavía — solo API. La sección 10.6 pide el log de entregas "visible en el panel", así que sigue siendo un pendiente real, no solo un nice-to-have.
+
+### Estado verificado en producción (2026-08-05)
+
+Se levantó un contenedor receptor temporal (`python:3.13-alpine`, servidor HTTP mínimo) en la misma red Docker que el backend de producción, para poder inspeccionar la entrega real sin depender de un servicio de terceros. Contra `https://api-ia.riava.cl`: crear webhook suscripto a `message.received` + `conversation.started` → enviar un mensaje de chat → el log de entregas muestra ambas con `status: success`, `attempt_count: 1`, `last_status_code: 200` → se recalculó la firma HMAC de forma independiente con el secreto devuelto en la creación y **coincide exactamente** con el header `X-Signature` recibido por el receptor. Contenedor de prueba y datos limpiados después.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11)
+
+- [ ] Cola persistente en Redis para los reintentos de webhooks (reemplazar el `BackgroundTasks` en-proceso) — es la brecha más importante entre lo implementado y lo que pide la sección 10.6.
+- [ ] Pantalla del panel para configurar webhooks y ver el log de entregas.
+- [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`.
+- [ ] Cifrado en reposo del secreto del webhook.
+- [ ] Evento `handoff.requested` — no hay todavía ningún flujo de handoff a operador humano en el Core que lo dispare.
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Hooks/eventos del manifiesto de plugins (`message.received`, `conversation.closed`) — sigue sin conectarse a un event bus propio de plugins (Fase 5); nota: esto es distinto de los webhooks salientes recién implementados, que son un mecanismo del Core hacia afuera, no del Core hacia los plugins.
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos — siguen en la lista de fases anteriores.
