@@ -1,5 +1,6 @@
 import base64
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import Query
@@ -38,7 +39,7 @@ def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
     return datetime.fromisoformat(created_at_raw), UUID(id_raw)
 
 
-def apply_cursor(query: Select, model: type, params: CursorParams) -> Select:  # type: ignore[type-arg]
+def apply_cursor(query: Select, model: type[Any], params: CursorParams) -> Select:  # type: ignore[type-arg]
     """Pagina por (created_at, id) — orden estable incluso con timestamps
     empatados. Se pide limit+1 para saber si hay una página siguiente sin una
     segunda query (sección 10.7 del CLAUDE.md: paginación por cursor)."""
@@ -49,7 +50,7 @@ def apply_cursor(query: Select, model: type, params: CursorParams) -> Select:  #
     return query.limit(params.limit + 1)
 
 
-def build_page(items: list, params: CursorParams) -> tuple[list, str | None]:  # type: ignore[type-arg]
+def build_page(items: list[Any], params: CursorParams) -> tuple[list[Any], str | None]:
     has_more = len(items) > params.limit
     page_items = items[: params.limit]
     next_cursor = (
