@@ -12,6 +12,7 @@ from app.core.exceptions import (
 )
 from app.core.security import decode_token
 from app.services.api_keys import resolve_api_key
+from app.services.token_revocation import is_access_token_revoked
 
 PUBLIC_PATH_PREFIXES = ("/api/v1/public/health", "/docs", "/openapi.json", "/api/v1/openapi.json")
 
@@ -45,12 +46,19 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
                 request.state.company_id = api_key.company_id
                 request.state.api_key = api_key
             else:
+                revoked = False
                 try:
                     payload = decode_token(token)
-                    request.state.company_id = UUID(payload["company_id"])
-                    request.state.user_id = UUID(payload["sub"])
+                    company_id = UUID(payload["company_id"])
+                    if payload.get("type") == "access":
+                        revoked = await is_access_token_revoked(company_id, payload["jti"])
                 except Exception:
                     error = UnauthorizedError("Token inválido o expirado")
                     return await domain_error_handler(request, error)
+                if revoked:
+                    error = UnauthorizedError("Token inválido o expirado")
+                    return await domain_error_handler(request, error)
+                request.state.company_id = company_id
+                request.state.user_id = UUID(payload["sub"])
 
         return await call_next(request)

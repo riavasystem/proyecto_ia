@@ -47,6 +47,24 @@ async def test_logout_invalidates_refresh_token(client: AsyncClient) -> None:
     assert refresh_attempt.status_code == 401
 
 
+async def test_logout_invalidates_access_token(client: AsyncClient) -> None:
+    tokens = await _register(client, "Empresa Logout Access", "logout-access@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    still_works = await client.get("/api/v1/admin/company", headers=headers)
+    assert still_works.status_code == 200
+
+    logout_response = await client.post(
+        "/api/v1/admin/auth/logout",
+        json={"refresh_token": tokens["refresh_token"]},
+        headers=headers,
+    )
+    assert logout_response.status_code == 204
+
+    after_logout = await client.get("/api/v1/admin/company", headers=headers)
+    assert after_logout.status_code == 401
+
+
 async def test_logout_is_idempotent_for_garbage_input(client: AsyncClient) -> None:
     response = await client.post(
         "/api/v1/admin/auth/logout", json={"refresh_token": "not-a-real-token"}

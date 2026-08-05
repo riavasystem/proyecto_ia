@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,11 @@ from app.db.session import get_db
 from app.models.company import Company
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse
-from app.services.token_revocation import is_refresh_token_revoked, revoke_refresh_token
+from app.services.token_revocation import (
+    is_refresh_token_revoked,
+    revoke_access_token,
+    revoke_refresh_token,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -87,25 +91,35 @@ async def refresh(payload: RefreshRequest) -> TokenResponse:
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(payload: RefreshRequest) -> None:
-    """Invalida el refresh token para que ya no pueda usarse en /refresh. El
-    access token vigente sigue funcionando hasta su expiración natural (es
-    corto a propósito), consistente con el modelo "access corto + refresh
-    revocable" de la sección 2 del CLAUDE.md. Idempotente: un token ya
-    inválido o expirado no es un error, simplemente no hay nada que revocar."""
+async def logout(payload: RefreshRequest, request: Request) -> None:
+    """Invalida el refresh token para que ya no pueda usarse en /refresh, y
+    también el access token vigente (el que autenticó esta misma request),
+    para que un logout sea realmente inmediato en vez de esperar a que el
+    access token expire por su cuenta. Idempotente: un token ya inválido o
+    expirado no es un error, simplemente no hay nada que revocar."""
     try:
         decoded = decode_token(payload.refresh_token)
+        if decoded.get("type") == "refresh":
+            await revoke_refresh_token(
+                UUID(decoded["company_id"]),
+                decoded["jti"],
+                datetime.fromtimestamp(int(decoded["exp"]), tz=UTC),
+            )
     except Exception:
-        return
+        pass
 
-    if decoded.get("type") != "refresh":
-        return
-
-    await revoke_refresh_token(
-        UUID(decoded["company_id"]),
-        decoded["jti"],
-        datetime.fromtimestamp(int(decoded["exp"]), tz=UTC),
-    )
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            access_decoded = decode_token(auth_header.removeprefix("Bearer "))
+            if access_decoded.get("type") == "access":
+                await revoke_access_token(
+                    UUID(access_decoded["company_id"]),
+                    access_decoded["jti"],
+                    datetime.fromtimestamp(int(access_decoded["exp"]), tz=UTC),
+                )
+        except Exception:
+            pass
 
 
 def _decode_refresh_token_or_401(refresh_token: str) -> dict[str, str]:
