@@ -409,3 +409,39 @@ El cambio de forma de respuesta en los listados públicos existentes (`array` �
 - [ ] Migrar el motor de IA a un LLM real (Claude API) si el usuario lo decide más adelante.
 - [ ] Mover secretos de producción a un gestor.
 - [ ] `docs/openapi.json` sigue sin generarse/validarse en CI (sección 10.7 lo pide explícitamente) — nunca se implementó esa validación.
+
+---
+
+## 2026-08-05 (cont.) — Fase 10: migraciones versionadas de plugins
+
+### Qué se creó
+
+Cierra el pendiente de la Fase 5: el plugin "agenda" creaba su tabla a mano con `CREATE TABLE IF NOT EXISTS` dentro de `install()` — funcionaba, pero no había forma de versionar un cambio de esquema futuro (agregar una columna, por ejemplo) sin reescribir el mismo archivo y sin registro de qué se aplicó.
+
+- **Mecanismo genérico, independiente de Alembic**: cada plugin declara sus migraciones como archivos `.sql` numerados en `<plugin>/migrations/` (p. ej. `0001_create_bookings_table.sql`). Deliberadamente *no* se mezclan con la cadena de revisiones de Alembic del Core — la sección 8 del CLAUDE.md pide migraciones "propias, dentro del plugin", y mezclarlas con el histórico de Alembic del Core hubiera acoplado el ciclo de vida de un plugin al del Core.
+- **`app/models/plugin_migration.py`** (nuevo, tabla `plugin_migrations`, Core): registra qué archivo de qué plugin ya se aplicó. Sin `company_id` a propósito — las tablas `plg_<nombre>_*` de un plugin son de esquema compartido entre tenants (el aislamiento por tenant pasa por la columna `company_id` de esas tablas, no por el esquema en sí), así que una migración se aplica **una sola vez para toda la instancia**, no una vez por tenant.
+- **`registry.py`**: descubre los `.sql` de cada plugin junto con su manifiesto.
+- **`manager.py`**: nuevo `apply_pending_migrations()`, llamado antes de `plugin.install()`. Aplica en orden los archivos no registrados todavía; si uno falla, ni ese ni los siguientes quedan marcados como aplicados (falla rápido, sin dejar estado a medias).
+- El plugin "agenda" quedó migrado al nuevo esquema: `install()` ya no ejecuta SQL, la creación de `plg_agenda_bookings` vive en `migrations/0001_create_bookings_table.sql`.
+
+**Sin rollback automático (downgrade) todavía** — igual que las migraciones de Alembic del Core tampoco se usan en reversa en la práctica en este proyecto, se documenta como límite consciente, no como bug.
+
+### Incidente de infraestructura: rate limit secundario de GHCR
+
+El primer intento de deploy de esta fase falló con `403 secondary rate limit` al pushear la imagen a GitHub Container Registry — consecuencia de la cantidad de deploys seguidos en esta sesión (Fases 6 a 10 en el mismo día). No era un problema de código (CI ya había pasado en verde para ese commit). Se esperó unos minutos y se re-disparó el deploy con un commit adicional (no se pudo usar `workflow_dispatch` ni `gh run rerun` porque la cuenta autenticada en el `gh` CLI de esta máquina —`finopslatam-sudo`— no tiene permisos de admin sobre el repo, y es además la cuenta que el usuario pidió explícitamente no usar para nada; el mecanismo real de esta sesión sigue siendo push por SSH con el alias `github-riavasystem`).
+
+### Estado verificado en producción (2026-08-05)
+
+Contra `https://api-ia.riava.cl`: instalar "agenda" en un tenant nuevo → la migración corre automáticamente → `plugin_migrations` en Postgres muestra `(agenda, 0001_create_bookings_table.sql)` → crear una reserva real funciona de punta a punta (confirma que la tabla existe vía la migración, no vía el `CREATE TABLE IF NOT EXISTS` viejo que ya no está en el código). Datos de prueba limpiados (la fila de `plugin_migrations` se dejó, es correcta que persista).
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 10)
+
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Hooks/eventos del manifiesto (`message.received`, `conversation.closed`) — declarados pero sin event bus que los dispare (Fase 5).
+- [ ] Webhooks salientes (sección 10.6) — sigue siendo el pendiente más grande de infraestructura de integración: firma HMAC, reintentos con backoff, DLQ, log de entregas.
+- [ ] Rollback (downgrade) de migraciones de plugin — no implementado, documentado como límite consciente.
+- [ ] Generalizar `chat_triggers` a otros plugins más allá de "agenda"; pulir el filtrado de palabras de relleno en el parser de `agenda._handle_chat` (Fase 7).
+- [ ] Revocar el access token vigente en logout, no solo el refresh (Fase 8).
+- [ ] Migrar el motor de IA a un LLM real si el usuario lo decide.
+- [ ] Mover secretos de producción a un gestor.
+- [ ] `docs/openapi.json` sin generar/validar en CI.
