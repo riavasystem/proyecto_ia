@@ -6,23 +6,32 @@ import { apiFetch, ApiError } from "@/lib/api";
 export interface FieldConfig<T> {
   name: keyof T & string;
   label: string;
-  type?: "text" | "number" | "textarea" | "checkbox" | "date";
+  type?: "text" | "number" | "textarea" | "checkbox" | "date" | "time" | "select";
+  options?: { value: string; label: string }[]; // requerido si type === "select"
   render?: (value: T[keyof T]) => ReactNode;
 }
 
-interface CrudPageProps<T extends { id: string }> {
+interface CrudSectionProps<T extends { id: string }> {
   title: string;
   resourcePath: string; // e.g. "/api/v1/admin/services"
   fields: FieldConfig<T>[];
   emptyForm: Record<string, unknown>;
+  headingTag?: "h1" | "h2";
+  onChange?: () => void; // notifica a un padre cuando la lista cambia (alta/edición/borrado)
 }
 
-export function CrudPage<T extends { id: string }>({
+/** El cuerpo de un CRUD genérico (form + tabla), sin wrapper de página propio,
+ * para poder combinar varias secciones en una sola pantalla (p. ej. Horarios:
+ * sucursales + horario semanal + excepciones). CrudPage lo envuelve para el
+ * caso de uso original de "una pantalla, un recurso". */
+export function CrudSection<T extends { id: string }>({
   title,
   resourcePath,
   fields,
   emptyForm,
-}: CrudPageProps<T>) {
+  headingTag = "h1",
+  onChange,
+}: CrudSectionProps<T>) {
   const [items, setItems] = useState<T[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +94,7 @@ export function CrudPage<T extends { id: string }>({
       }
       startCreate();
       await load();
+      onChange?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo guardar");
     } finally {
@@ -97,14 +107,25 @@ export function CrudPage<T extends { id: string }>({
     try {
       await apiFetch(`${resourcePath}/${id}`, { method: "DELETE" });
       await load();
+      onChange?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo eliminar");
     }
   }
 
+  const Heading = headingTag;
+
   return (
-    <main className="flex flex-col gap-6 p-8">
-      <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+    <section className="flex flex-col gap-4">
+      <Heading
+        className={
+          headingTag === "h1"
+            ? "text-xl font-semibold tracking-tight"
+            : "text-base font-semibold tracking-tight"
+        }
+      >
+        {title}
+      </Heading>
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <form
@@ -127,6 +148,19 @@ export function CrudPage<T extends { id: string }>({
                 onChange={(e) => setForm({ ...form, [field.name]: e.target.checked })}
                 className="h-4 w-4 self-start"
               />
+            ) : field.type === "select" ? (
+              <select
+                value={String(form[field.name] ?? "")}
+                onChange={(e) => setForm({ ...form, [field.name]: e.target.value })}
+                className="w-56 rounded-md border border-zinc-300 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900"
+              >
+                <option value="">Seleccioná una opción</option>
+                {(field.options ?? []).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             ) : (
               <input
                 type={field.type ?? "text"}
@@ -206,6 +240,21 @@ export function CrudPage<T extends { id: string }>({
           </table>
         </div>
       )}
+    </section>
+  );
+}
+
+interface CrudPageProps<T extends { id: string }> {
+  title: string;
+  resourcePath: string;
+  fields: FieldConfig<T>[];
+  emptyForm: Record<string, unknown>;
+}
+
+export function CrudPage<T extends { id: string }>(props: CrudPageProps<T>) {
+  return (
+    <main className="flex flex-col gap-6 p-8">
+      <CrudSection {...props} headingTag="h1" />
     </main>
   );
 }

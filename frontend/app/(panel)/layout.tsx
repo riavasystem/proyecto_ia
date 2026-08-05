@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/empresa", label: "Empresa" },
   { href: "/servicios", label: "Servicios" },
   { href: "/productos", label: "Productos" },
+  { href: "/horarios", label: "Horarios" },
   { href: "/promociones", label: "Promociones" },
   { href: "/politicas", label: "Políticas" },
   { href: "/faq", label: "FAQ" },
