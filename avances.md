@@ -556,7 +556,37 @@ CI (lint + typecheck + build del frontend) en verde para el commit `4ff2791`. De
 - [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`.
 - [ ] Cifrado en reposo del secreto del webhook.
 - [ ] Evento `handoff.requested` sin flujo que lo dispare.
-- [ ] `ON DELETE CASCADE` (o borrado en cascada a nivel aplicación) para `company_id` en todas las tablas — sigue sin resolverse, se volvió a topar en la limpieza de esta fase.
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5, distinto de los webhooks salientes).
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
+
+---
+
+## 2026-08-05 (cont.) — Fase 11d: `company_id` con FK real y `ON DELETE CASCADE`
+
+### Qué se creó
+
+Cerraba la deuda de integridad encontrada dos veces seguidas (Fases 11b y 11c) al limpiar datos de prueba: `company_id` en las tablas del Core era una columna UUID simple, sin ninguna referencia real a `companies.id` — borrar una empresa no fallaba, pero tampoco borraba nada más, dejando huérfanos silenciosos en todas las tablas.
+
+- **`app/db/base.py`**: `TenantMixin.company_id` ahora declara `ForeignKey("companies.id", ondelete="CASCADE")`. Como todas las tablas del Core heredan este mixin, el cambio aplica de forma uniforme sin tocar cada modelo.
+- **`migrations/versions/0007_a1f3c9e2b4d7_company_id_fk_cascade.py`**: agrega la constraint (`ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE`) a las 16 tablas del Core que tienen `company_id`: `contacts`, `conversations`, `messages`, `services`, `users`, `products`, `branches`, `business_hours`, `schedule_exceptions`, `promotions`, `policies`, `faqs`, `installed_plugins`, `webhook_endpoints`, `webhook_deliveries`, `api_keys`.
+- **Fuera de alcance a propósito**: las tablas de plugins (p. ej. `plg_agenda_bookings`) no se tocaron — su esquema vive fuera de la cadena de Alembic del Core (ver Fase 10, migraciones propias por plugin), y en el caso concreto de "agenda" `company_id` está tipado como `VARCHAR`, no `UUID`, así que agregarle la FK necesitaría además un cambio de tipo — se documenta como pendiente separado, no se mezcló con este fix.
+
+### Antes de escribir la migración: se verificó que no hubiera huérfanos ya existentes en producción
+
+Si hubiera quedado algún dato huérfano de sesiones anteriores, la migración habría fallado al aplicar la constraint (Postgres no deja crear una FK si ya hay filas que la violan). Se corrió un `SELECT count(*) ... WHERE company_id NOT IN (SELECT id FROM companies)` contra cada tabla candidata antes de escribir la migración: todas en cero (la limpieza manual de las fases anteriores había dejado la base consistente, por suerte/disciplina, no porque hubiera garantías).
+
+### Estado verificado en producción (2026-08-05)
+
+Contra `https://api-ia.riava.cl` con el commit `ad6b642` desplegado: `pg_constraint` muestra las 16 FKs con `confdeltype = 'c'` (cascada) aplicadas. Smoke test real: se registró una empresa de prueba, se le creó un webhook, una API key, un servicio (lo que también crea implícitamente el usuario admin), se confirmó que las cuatro tablas tenían 1 fila cada una para ese `company_id`, se borró la fila de `companies` directamente por SQL, y las cuatro tablas volvieron a 0 filas **sin ningún `DELETE` manual adicional** — a diferencia de las Fases 11b y 11c, donde hubo que limpiar tabla por tabla. Este es el primer smoke test de esta sesión que prueba explícitamente el comportamiento de borrado, no solo de alta/lectura.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11d)
+
+- [ ] Extender la FK con cascada a las tablas de plugins que la necesiten (requiere que cada plugin decida su propio esquema de tipos — para "agenda" implica migrar `company_id` de `VARCHAR` a `UUID` primero).
+- [ ] Verificación visual real en navegador de la pantalla de webhooks (Fase 11c, sigue pendiente).
+- [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`.
+- [ ] Cifrado en reposo del secreto del webhook.
+- [ ] Evento `handoff.requested` sin flujo que lo dispare.
 - [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
 - [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5, distinto de los webhooks salientes).
 - [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
