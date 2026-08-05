@@ -1,12 +1,13 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.engine import process_message
 from app.api.deps import CurrentCompanyId, require_scope
+from app.api.pagination import CursorPage, CursorParams, apply_cursor, build_page, cursor_params
 from app.api.rate_limit import enforce_rate_limit
 from app.core.exceptions import NotFoundError
 from app.db.session import get_db
@@ -87,6 +88,30 @@ async def chat(payload: ChatRequest, company_id: CurrentCompanyId, db: DbSession
     await db.commit()
 
     return ChatResponse(conversation_id=conversation.id, reply=reply.text)
+
+
+@router.get(
+    "/conversations",
+    response_model=CursorPage[ConversationRead],
+    dependencies=[Depends(require_scope("conversations:read")), Depends(enforce_rate_limit)],
+)
+async def list_conversations(
+    company_id: CurrentCompanyId,
+    db: DbSession,
+    params: Annotated[CursorParams, Depends(cursor_params)],
+    external_user_id: Annotated[str | None, Query()] = None,
+) -> CursorPage[ConversationRead]:
+    query = select(Conversation).where(Conversation.company_id == company_id)
+    if external_user_id is not None:
+        query = query.join(Contact, Contact.id == Conversation.contact_id).where(
+            Contact.external_id == external_user_id
+        )
+    query = apply_cursor(query, Conversation, params)
+    result = await db.execute(query)
+    items, next_cursor = build_page(list(result.scalars().all()), params)
+    return CursorPage(
+        data=[ConversationRead.model_validate(c) for c in items], next_cursor=next_cursor
+    )
 
 
 @router.get(

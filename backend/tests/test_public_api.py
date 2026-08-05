@@ -64,12 +64,12 @@ async def test_public_api_key_sees_only_its_own_tenant_data(client: AsyncClient)
 
     services_a = await client.get("/api/v1/public/services", headers=_auth(key_a))
     assert services_a.status_code == 200
-    names_a = [s["name"] for s in services_a.json()]
+    names_a = [s["name"] for s in services_a.json()["data"]]
     assert names_a == ["Manicure"]
 
     services_b = await client.get("/api/v1/public/services", headers=_auth(key_b))
     assert services_b.status_code == 200
-    names_b = [s["name"] for s in services_b.json()]
+    names_b = [s["name"] for s in services_b.json()["data"]]
     assert names_b == ["Corte de barba"]
 
 
