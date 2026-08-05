@@ -26,3 +26,9 @@ pytest
 alembic revision --autogenerate -m "descripcion"
 alembic upgrade head
 ```
+
+## Migraciones de plugins
+
+Cada plugin versiona su propio esquema en `plugins/<nombre>/migrations/*.sql`
+(independiente de Alembic). Se aplican automáticamente al instalar el plugin
+por primera vez — ver `app/plugins_runtime/manager.py::apply_pending_migrations`.
