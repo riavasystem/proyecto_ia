@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: "/faq", label: "FAQ" },
   { href: "/plugins", label: "Plugins" },
   { href: "/api-keys", label: "API Keys" },
+  { href: "/webhooks", label: "Webhooks" },
   { href: "/conversaciones", label: "Conversaciones" },
 ];
 
