@@ -484,3 +484,45 @@ Se levantó un contenedor receptor temporal (`python:3.13-alpine`, servidor HTTP
 - [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
 - [ ] Hooks/eventos del manifiesto de plugins (`message.received`, `conversation.closed`) — sigue sin conectarse a un event bus propio de plugins (Fase 5); nota: esto es distinto de los webhooks salientes recién implementados, que son un mecanismo del Core hacia afuera, no del Core hacia los plugins.
 - [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos — siguen en la lista de fases anteriores.
+
+---
+
+## 2026-08-05 (cont.) — Fase 11b: cola persistente en Redis para reintentos de webhooks
+
+### Qué se creó
+
+Cerraba la brecha más importante que había quedado documentada al final de la Fase 11: los reintentos de entrega de webhooks ya no dependen de que el proceso del backend siga vivo.
+
+- **`app/services/webhook_queue.py`** (nuevo): una lista en Redis (`webhooks:queue:ready`) con los ids de entregas listas para intentar, y un sorted set (`webhooks:queue:scheduled`) con los reintentos pendientes indexados por el timestamp en que deben reintentarse (backoff sin bloquear con `asyncio.sleep`). Un worker (`run_worker`) corre en un loop de fondo: promueve del sorted set al listado los reintentos ya vencidos, y consume la lista con `BLPOP` (bloqueo eficiente, sin polling activo). Cada intento fallido reprograma la entrega en el sorted set con el backoff correspondiente (2s/10s/30s); al tercer intento fallido pasa a `dead_letter`, igual que antes.
+- **Recuperación tras reinicio** (`requeue_pending`): al arrancar, el backend vuelve a encolar cualquier `WebhookDelivery` que haya quedado en estado `pending` — el escenario exacto que la Fase 11 dejó documentado como pérdida silenciosa ahora se recupera solo.
+- **`app/main.py`**: se agregó un `lifespan` a la app de FastAPI que llama a `requeue_pending()` y levanta el worker como una tarea de `asyncio` al arrancar, y lo cancela limpiamente al apagar.
+- **`emit_event()`** en `webhooks.py` ya no recibe `BackgroundTasks`: ahora solo crea las filas `WebhookDelivery` (`status="pending"`) y encola sus ids en Redis. La entrega real la hace el worker, no la request que disparó el evento — se sacó el parámetro `background_tasks` de `chat.py` y `plugins_public.py` porque dejó de hacer falta.
+
+### Detalle técnico: cómo se testeó sin romper el aislamiento entre tests
+
+`httpx.ASGITransport` (usado en los tests) no dispara los eventos de lifespan de FastAPI, así que el worker no arranca solo como en producción. Se ajustó `tests/conftest.py` para levantar y parar el worker a mano alrededor de cada test (mismo patrón que usa el fixture para la sesión de base de datos), y se limpian las claves de Redis de la cola al principio de cada test para que no haya contaminación cruzada entre tests que corren contra la misma instancia de Redis. `test_webhooks.py` pasó de asumir que la entrega ya había terminado tras un par de `asyncio.sleep(0)` (válido con `BackgroundTasks` en el mismo proceso) a esperar activamente (polling corto con timeout) hasta que las entregas salgan de estado `pending` — necesario porque ahora la entrega ocurre en una tarea de `asyncio` separada, coordinada por Redis.
+
+### Bug encontrado en CI (no en local)
+
+mypy en CI marcó 3 errores de tipo: los stubs de `redis-py` para `zrangebyscore`/`blpop` devuelven una unión amplia (`bytes | str | ...`), y el código pasaba esos valores directo a `zrem`/`rpush`/`UUID()` sin normalizar. La corrección fue forzar `str(...)` antes de usarlos. (mypy no pudo correrse en local esta vez: tiró un error interno propio de la herramienta en esta máquina, no relacionado con el código — se empujó igual y CI, que sí corrió mypy limpio, encontró el problema real.)
+
+### Qué sigue sin resolver
+
+- La entrega individual sigue siendo "al menos una vez con backoff", no garantiza orden entre eventos de un mismo tenant si hay varios webhooks o reintentos superpuestos — aceptable para el caso de uso actual (notificaciones, no un event log ordenado).
+- Sigue sin haber pantalla en el panel para ver el log de entregas ni configurar webhooks (mismo pendiente de la Fase 11).
+- No se probó el escenario de reinicio real del backend en producción a mitad de un reintento (sería disruptivo); la recuperación se verificó por revisión de código y porque `requeue_pending()` corre igual que cualquier otro arranque normal del proceso — un reinicio de un backend sano ya ejecuta ese camino.
+
+### Estado verificado en producción (2026-08-05)
+
+Contra `https://api-ia.riava.cl`, con la imagen del commit `ff5a4a6` ya desplegada: se levantó otra vez un contenedor receptor temporal en la red Docker del backend, se creó un webhook suscripto a `message.received` + `conversation.started`, se envió un mensaje de chat, y ambas entregas llegaron con `status: success`, `attempt_count: 1` — confirmando que el nuevo camino (Redis → worker → `BLPOP` → entrega) funciona de punta a punta en producción, no solo en tests. Se volvió a recalcular la firma HMAC de forma independiente con el secreto devuelto al crear el webhook y coincidió exactamente con el header recibido. Datos de prueba limpiados: acá se encontró que `company_id` en las tablas del Core **no tiene FK con cascada** hacia `companies` (es una columna simple, no una referencia con `ON DELETE CASCADE`) — borrar la empresa de prueba dejó filas huérfanas en `webhook_endpoints`, `webhook_deliveries`, `contacts`, `api_keys`, etc., que hubo que borrar a mano tabla por tabla. Contenedor de prueba también eliminado.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11b)
+
+- [ ] Pantalla del panel para configurar webhooks y ver el log de entregas.
+- [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`.
+- [ ] Cifrado en reposo del secreto del webhook.
+- [ ] Evento `handoff.requested` sin flujo que lo dispare.
+- [ ] Considerar agregar `ON DELETE CASCADE` (o un proceso explícito de borrado en cascada a nivel aplicación) en las FKs de `company_id` hacia `companies` — hoy borrar una empresa deja huérfanos en todas las tablas del Core y de plugins; se descubrió recién en la limpieza de esta fase, no es nuevo pero no estaba documentado.
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5, distinto de los webhooks salientes).
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
