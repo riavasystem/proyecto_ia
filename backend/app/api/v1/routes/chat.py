@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,7 +58,6 @@ async def chat(
     payload: ChatRequest,
     company_id: CurrentCompanyId,
     db: DbSession,
-    background_tasks: BackgroundTasks,
 ) -> ChatResponse:
     contact = await _get_or_create_contact(
         db, company_id, payload.external_user_id, payload.external_metadata
@@ -97,21 +96,18 @@ async def chat(
     if is_new_conversation:
         await emit_event(
             db,
-            background_tasks,
             company_id,
             "conversation.started",
             {"conversation_id": str(conversation.id), "external_user_id": payload.external_user_id},
         )
     await emit_event(
         db,
-        background_tasks,
         company_id,
         "message.received",
         {"conversation_id": str(conversation.id), "message": payload.message},
     )
     await emit_event(
         db,
-        background_tasks,
         company_id,
         "message.replied",
         {
@@ -177,7 +173,6 @@ async def close_conversation(
     conversation_id: UUID,
     company_id: CurrentCompanyId,
     db: DbSession,
-    background_tasks: BackgroundTasks,
 ) -> Conversation:
     conversation = await _get_conversation_or_404(db, company_id, conversation_id)
     conversation.status = "closed"
@@ -185,7 +180,6 @@ async def close_conversation(
     await db.refresh(conversation)
     await emit_event(
         db,
-        background_tasks,
         company_id,
         "conversation.closed",
         {"conversation_id": str(conversation.id)},

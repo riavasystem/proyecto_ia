@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentCompanyId, require_scope
@@ -25,12 +25,10 @@ async def execute_plugin(
     payload: PluginExecuteRequest,
     company_id: CurrentCompanyId,
     db: DbSession,
-    background_tasks: BackgroundTasks,
 ) -> PluginExecuteResponse:
     result = await manager.execute(db, company_id, name, payload.action, payload.payload)
     await emit_event(
         db,
-        background_tasks,
         company_id,
         "plugin.executed",
         {

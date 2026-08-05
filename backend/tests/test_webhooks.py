@@ -9,6 +9,21 @@ from app.db import session as db_session
 from app.models.webhook import WebhookDelivery
 
 
+async def _wait_for_deliveries(expected_count: int, timeout: float = 5.0) -> list[WebhookDelivery]:
+    """El worker de la cola procesa las entregas de forma asíncrona (vía
+    Redis + BLPOP), así que hay que esperar activamente en vez de asumir que
+    ya terminó cuando el endpoint /chat responde."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        async with db_session.async_session_factory() as session:
+            result = await session.execute(select(WebhookDelivery))
+            deliveries = list(result.scalars().all())
+        if len(deliveries) >= expected_count and all(d.status != "pending" for d in deliveries):
+            return deliveries
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"timeout esperando {expected_count} entregas de webhook")
+
+
 async def _register(client: AsyncClient, company_name: str, email: str) -> str:
     response = await client.post(
         "/api/v1/admin/auth/register",
@@ -103,14 +118,7 @@ async def test_chat_emits_webhook_and_delivers_successfully(
     )
     assert response.status_code == 200
 
-    # Las entregas se disparan como BackgroundTask después de la respuesta;
-    # dar una vuelta al loop de eventos para que corran antes de assertear.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-
-    async with db_session.async_session_factory() as session:
-        result = await session.execute(select(WebhookDelivery))
-        deliveries = result.scalars().all()
+    deliveries = await _wait_for_deliveries(expected_count=2)
 
     event_types = {d.event_type for d in deliveries}
     assert event_types == {"message.received", "conversation.started"}
