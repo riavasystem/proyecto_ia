@@ -518,11 +518,45 @@ Contra `https://api-ia.riava.cl`, con la imagen del commit `ff5a4a6` ya desplega
 
 ### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11b)
 
-- [ ] Pantalla del panel para configurar webhooks y ver el log de entregas.
 - [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`.
 - [ ] Cifrado en reposo del secreto del webhook.
 - [ ] Evento `handoff.requested` sin flujo que lo dispare.
 - [ ] Considerar agregar `ON DELETE CASCADE` (o un proceso explícito de borrado en cascada a nivel aplicación) en las FKs de `company_id` hacia `companies` — hoy borrar una empresa deja huérfanos en todas las tablas del Core y de plugins; se descubrió recién en la limpieza de esta fase, no es nuevo pero no estaba documentado.
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5, distinto de los webhooks salientes).
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
+
+---
+
+## 2026-08-05 (cont.) — Fase 11c: pantalla de webhooks en el panel
+
+### Qué se creó
+
+`frontend/app/(panel)/webhooks/page.tsx`, siguiendo el mismo patrón que `api-keys` (misma pantalla ya validada en la Fase 6): formulario de alta con selección de eventos por checkbox, aviso de que el secreto solo se muestra una vez (igual que con las API keys), listado con estado activo/inactivo, botones para activar/desactivar (`PATCH`), eliminar (`DELETE`), y un log de entregas expandible por webhook (`GET /admin/webhooks/{id}/deliveries`) con fecha, evento, estado traducido (pendiente/entregado/fallido), cantidad de intentos, código HTTP y último error. Se agregó "Webhooks" a la navegación del panel (`layout.tsx`).
+
+Con esto se cierra el pendiente de la sección 10.6 de tener el log de entregas "visible en el panel", que había quedado documentado como faltante en la Fase 11 y en la Fase 11b.
+
+### Cómo se verificó (sin herramienta de automatización de navegador disponible en esta sesión)
+
+No hay un tool de control de navegador en este entorno, así que no se pudo hacer clicks reales en la UI. Se verificó lo que sí se pudo verificar con rigor:
+
+1. La ruta `/webhooks` compila, se despliega en Vercel (integración Git automática tras el push) y responde 200 — con el mismo comportamiento de carga (`Cargando…` en el HTML servido antes de la hidratación del cliente, porque la autenticación se resuelve del lado del cliente) que el resto de las pantallas del panel ya probadas en la Fase 6.
+2. Se ejecutó contra `https://api-ia.riava.cl` la secuencia exacta de llamadas que hace la pantalla — crear webhook → listar → `PATCH is_active:false` → ver entregas (vacío, esperable sin eventos disparados) → eliminar → listar de nuevo (vacío) — con los mismos endpoints, verbos y payloads que usa `page.tsx`, y las seis devolvieron las respuestas esperadas.
+3. La entrega real end-to-end (que el log de entregas efectivamente muestre datos correctos) ya se había verificado en la Fase 11b con un receptor real.
+
+Queda pendiente una pasada visual real en navegador la próxima vez que haya oportunidad (o que el usuario la haga manualmente) — se lo digo explícito en vez de dar la UI por probada sin haberla visto.
+
+### Estado verificado en producción (2026-08-05)
+
+CI (lint + typecheck + build del frontend) en verde para el commit `4ff2791`. Deploy automático a `https://proyecto-ia-wheat.vercel.app/webhooks` confirmado (200). Flujo de API que la pantalla consume probado de punta a punta contra producción, datos de prueba limpiados (incluyendo la fila de `companies`, que de nuevo no cascadeó — ver pendiente ya anotado en la Fase 11b).
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11c)
+
+- [ ] Verificación visual real en navegador de la pantalla de webhooks (no se pudo hacer en esta sesión por falta de herramienta de automatización de navegador).
+- [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`.
+- [ ] Cifrado en reposo del secreto del webhook.
+- [ ] Evento `handoff.requested` sin flujo que lo dispare.
+- [ ] `ON DELETE CASCADE` (o borrado en cascada a nivel aplicación) para `company_id` en todas las tablas — sigue sin resolverse, se volvió a topar en la limpieza de esta fase.
 - [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
 - [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5, distinto de los webhooks salientes).
 - [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
