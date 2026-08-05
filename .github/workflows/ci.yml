@@ -46,6 +46,12 @@ jobs:
           REDIS_URL: "redis://localhost:6379/0"
         run: pytest -q
 
+      - name: OpenAPI contract up to date
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          JWT_SECRET: ci-test-secret
+        run: python scripts/generate_openapi.py --check
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
