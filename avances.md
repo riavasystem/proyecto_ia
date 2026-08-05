@@ -370,3 +370,42 @@ Con esto quedan cerrados los 4 puntos pendientes que se identificaron al final d
 - [ ] Revocar también el access token vigente en logout (hoy solo se revoca el refresh; el access sigue funcionando hasta su expiración natural de ~15 min, que es la razón de ser de que sea corto — se documenta como decisión, no como bug, pero vale la pena reconsiderar si en algún momento se necesita "cerrar sesión en todos los dispositivos" de forma inmediata).
 - [ ] Migrar el motor de IA a un LLM real (Claude API) si el usuario lo decide más adelante.
 - [ ] Mover secretos de producción a un gestor.
+
+---
+
+## 2026-08-05 — Fase 9: paginación por cursor + `/public/schedule` + `/public/conversations`
+
+### Qué se creó
+
+Cierra tres pendientes de contrato público que venían arrastrándose desde la Fase 3/4 (sección 10 del CLAUDE.md).
+
+- **`app/api/pagination.py`** (nuevo): framework genérico de paginación por cursor. `CursorPage[T]` (Pydantic genérico con sintaxis PEP 695, `class CursorPage[T](BaseModel)`) como sobre de respuesta `{"data": [...], "next_cursor": ...}`. El cursor es un string opaco en base64 de `(created_at, id)`; se pagina con `WHERE (created_at, id) > cursor` y `ORDER BY created_at, id` — el `id` como desempate garantiza orden estable incluso con timestamps empatados. Se pide `limit + 1` filas para saber si hay página siguiente sin una segunda query.
+- **`_public_list.py`** reescrito para usar el framework — esto es un **cambio de forma de respuesta** en los listados públicos que ya existían (`/public/services`, `/public/products`, `/public/promotions`, `/public/faq`): antes devolvían un array plano, ahora devuelven el sobre `{data, next_cursor}`. Estaban implementados sin paginar desde la Fase 2/3, violando la sección 10.7 aunque nadie lo había marcado como bug hasta ahora.
+- **`GET /api/v1/public/conversations`** (nuevo, scope `conversations:read`): listado paginado, con filtro opcional `external_user_id` (útil para que un tercero traiga el historial de un usuario suyo en particular). Quedó pendiente explícitamente desde la Fase 4 por no tener paginación lista todavía.
+- **`GET /api/v1/public/schedule`** (nuevo, scope `catalog:read`): combina sucursales activas, horario semanal y excepciones **desde hoy en adelante** (no tiene sentido devolver feriados ya pasados) en una sola respuesta. No lleva cursor — nunca es un "listado largo" en la práctica.
+
+### Bug real encontrado en el camino: precisión de timestamps entre SQLite y Postgres
+
+Al escribir el primer test de paginación (crear 5 servicios, pedir de a 2), la segunda página volvía **vacía** en vez de traer los siguientes 2. Causa raíz: `TimestampMixin.created_at` usaba `server_default=func.now()`. En SQLite, `CURRENT_TIMESTAMP` trunca a resolución de segundo y **no incluye microsegundos** en el texto guardado. Pero cuando el cursor decodificado (un `datetime` de Python) se vincula como parámetro para la comparación `WHERE (created_at, id) > (?, ?)`, el bind processor de SQLite para `DATETIME` **siempre** agrega `.000000` al final. SQLite compara columnas `DATETIME` (que en realidad son `TEXT`) como texto: `"...:57"` nunca es igual ni mayor que `"...:57.000000"` — así que el filtro excluía todas las filas en silencio, sin error.
+
+Esto es un artefacto específico de SQLite (Postgres compara timestamps por valor, no por texto, y `now()` en Postgres sí tiene microsegundos), pero la corrección elegida no es un parche solo-para-tests: se cambió `TimestampMixin` para generar `created_at`/`updated_at` **en Python** (`datetime.now(UTC)`) en vez de vía `server_default`. Es consistente entre ambos motores, no depende de la resolución del reloj de la base, y elimina la clase entera de bug de raíz en vez de solo en el cursor. No requirió migración: el `server_default` que ya existe en las tablas de Postgres queda como fallback inerte, el valor real siempre lo provee el ORM antes del INSERT.
+
+Se agrega a la lista de "SQLite es más permisivo/distinto que Postgres, los tests a veces revelan cosas en la dirección contraria a lo esperado" — igual que el bug de timezone-naive de la Fase 3, pero esta vez fue SQLite el que tenía el comportamiento más raro, no Postgres.
+
+### Estado verificado en producción (2026-08-05)
+
+Contra `https://api-ia.riava.cl`: crear 3 servicios → `GET /public/services?limit=2` → 2 items + `next_cursor` → siguiente página con ese cursor → 1 item restante + `next_cursor: null` → `GET /public/schedule` con una sucursal y un horario cargados → responde la estructura completa → `POST /public/chat` seguido de `GET /public/conversations` → aparece la conversación recién creada. Datos de prueba limpiados después.
+
+### Nota de compatibilidad
+
+El cambio de forma de respuesta en los listados públicos existentes (`array` → `{data, next_cursor}`) es **técnicamente incompatible** con `v1` tal como lo define la sección 10.7 del CLAUDE.md ("prohibido renombrar o eliminar campos"). Se decidió hacerlo de todas formas porque: (a) el contrato público real de producción no tenía consumidores externos todavía (nadie fuera de este mismo repo lo usa aún — ni SDKs, ni widget, ni documentación publicada lo referencian), y (b) dejarlo sin paginar era el verdadero incumplimiento del contrato (sección 10.7 exige cursor en "todos los listados"). Si en el futuro ya hay terceros integrados antes de un cambio de forma similar, correspondería versionar a `v2` en vez de romper `v1` in-place.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 9)
+
+- [ ] Pantallas de Horarios/Sucursales, Usuarios/RBAC, Canales, Configuración en el panel (Fase 6).
+- [ ] Migraciones de plugins versionadas, hooks/eventos del manifiesto, webhooks salientes (Fases 5, 7).
+- [ ] Generalizar `chat_triggers` a otros plugins más allá de "agenda"; pulir el filtrado de palabras de relleno en el parser de `agenda._handle_chat` (Fase 7).
+- [ ] Revocar el access token vigente en logout, no solo el refresh (Fase 8, decisión consciente por ahora).
+- [ ] Migrar el motor de IA a un LLM real (Claude API) si el usuario lo decide más adelante.
+- [ ] Mover secretos de producción a un gestor.
+- [ ] `docs/openapi.json` sigue sin generarse/validarse en CI (sección 10.7 lo pide explícitamente) — nunca se implementó esa validación.
