@@ -616,4 +616,40 @@ Igual que con la pantalla de webhooks (Fase 11c), no hay herramienta de automati
 - [ ] Extender la FK con cascada a las tablas de plugins (Fase 11d, pendiente para "agenda").
 - [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`; cifrado en reposo del secreto del webhook; evento `handoff.requested` sin flujo que lo dispare.
 - [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5).
-- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, revocar access token en logout, `docs/openapi.json` en CI, LLM real, gestor de secretos.
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers`, LLM real, gestor de secretos.
+
+---
+
+## 2026-08-05 (cont.) — Fase 11f: revocar access token en logout + `docs/openapi.json` en CI
+
+Dos pendientes chicos y acotados, cerrados en la misma tanda.
+
+### Revocar el access token vigente en logout
+
+Hasta ahora `logout` solo invalidaba el refresh token; el access token con el que se llamaba a `/logout` seguía funcionando hasta su expiración natural (`access_token_expire_minutes`, corto pero no inmediato). Ahora también se revoca.
+
+- `app/services/token_revocation.py`: generalizado para ambos tipos de token (`revoke_token`/`is_token_revoked` parametrizados por `token_type`, con `revoke_refresh_token`/`revoke_access_token` como atajos que mantienen la misma API que ya usaban `auth.py` y los tests).
+- `app/middleware/tenant.py`: al decodificar un access token en cada request, si es de tipo `"access"` chequea contra la lista de revocados en Redis y rechaza con 401 si está revocado — este es el punto real de enforcement, no alcanza con revocarlo en la base si nadie lo chequea.
+- `app/api/v1/routes/auth.py`: `logout` ahora también lee el header `Authorization` de su propia request, decodifica el access token, y lo revoca (best-effort: si no viene o es inválido, no es un error — el logout sigue siendo idempotente).
+- Test nuevo: `test_logout_invalidates_access_token` (llamar a un endpoint autenticado antes y después del logout con el mismo access token, 200 → 401).
+
+**Verificado en producción**: se registró una empresa de prueba, `GET /admin/company` con el access token dio 200, se llamó a `/auth/logout`, y el mismo access token pasó a dar 401 en el acto — sin esperar a que expirara. Datos de prueba limpiados con un solo `DELETE FROM companies`.
+
+### `docs/openapi.json` generado y validado en CI
+
+La sección 10.1/10.7 del CLAUDE.md pide que "el OpenAPI se genera automáticamente y se valida en CI: si el contrato cambia sin subir versión, el build falla". No existía ningún mecanismo para esto todavía.
+
+- `backend/scripts/generate_openapi.py`: importa la app real y escribe `docs/openapi.json` a partir de `app.openapi()` (el schema real, no uno mantenido a mano). En modo `--check` compara contra lo commiteado y falla si está desactualizado, sin sobreescribir nada.
+- `docs/openapi.json` (143 KB) commiteado por primera vez.
+- `.github/workflows/ci.yml`: nuevo paso "OpenAPI contract up to date" después de Pytest, que corre `generate_openapi.py --check`. Un PR que cambie cualquier endpoint sin regenerar el archivo ahora rompe CI, tal como pide el CLAUDE.md.
+
+**Nota de rendimiento de esta sesión, no del código**: en esta máquina en particular, importar `app.main` tardó ~17 minutos la primera vez corrido localmente (medido con `python -X importtime`, el grueso se va en la cadena de imports de `pydantic`/FastAPI) — no es que el proceso esté colgado, solo que esta máquina es inusualmente lenta para esto. En CI (GitHub Actions) corre en segundos, que es lo que importa para el gate real.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11f)
+
+- [ ] Verificación visual real en navegador de las pantallas de webhooks y horarios (sigue pendiente).
+- [ ] Pantallas de Usuarios/RBAC, Canales, Configuración en el panel (Fase 6) — implican backend nuevo (RBAC granular, adaptadores de canal), no son solo UI.
+- [ ] Extender la FK con cascada a las tablas de plugins (Fase 11d, pendiente para "agenda").
+- [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`; cifrado en reposo del secreto del webhook; evento `handoff.requested` sin flujo que lo dispare.
+- [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5).
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers` a otros plugins, LLM real, gestor de secretos de producción.
