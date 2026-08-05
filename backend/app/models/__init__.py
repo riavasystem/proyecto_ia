@@ -12,6 +12,7 @@ from app.models.promotion import Promotion
 from app.models.schedule import BusinessHour, ScheduleException
 from app.models.service import Service
 from app.models.user import User
+from app.models.webhook import WebhookDelivery, WebhookEndpoint
 
 __all__ = [
     "FAQ",
@@ -30,4 +31,6 @@ __all__ = [
     "ScheduleException",
     "Service",
     "User",
+    "WebhookDelivery",
+    "WebhookEndpoint",
 ]

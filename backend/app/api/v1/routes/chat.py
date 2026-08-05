@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from app.models.contact import Contact
 from app.models.conversation import Conversation, Message
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.conversation import ConversationDetailRead, ConversationRead, MessageRead
+from app.services.webhooks import emit_event
 
 router = APIRouter(tags=["chat"])
 
@@ -53,11 +54,17 @@ async def _get_conversation_or_404(
     response_model=ChatResponse,
     dependencies=[Depends(require_scope("chat:write")), Depends(enforce_rate_limit)],
 )
-async def chat(payload: ChatRequest, company_id: CurrentCompanyId, db: DbSession) -> ChatResponse:
+async def chat(
+    payload: ChatRequest,
+    company_id: CurrentCompanyId,
+    db: DbSession,
+    background_tasks: BackgroundTasks,
+) -> ChatResponse:
     contact = await _get_or_create_contact(
         db, company_id, payload.external_user_id, payload.external_metadata
     )
 
+    is_new_conversation = payload.conversation_id is None
     if payload.conversation_id is not None:
         conversation = await _get_conversation_or_404(db, company_id, payload.conversation_id)
     else:
@@ -86,6 +93,33 @@ async def chat(payload: ChatRequest, company_id: CurrentCompanyId, db: DbSession
         )
     )
     await db.commit()
+
+    if is_new_conversation:
+        await emit_event(
+            db,
+            background_tasks,
+            company_id,
+            "conversation.started",
+            {"conversation_id": str(conversation.id), "external_user_id": payload.external_user_id},
+        )
+    await emit_event(
+        db,
+        background_tasks,
+        company_id,
+        "message.received",
+        {"conversation_id": str(conversation.id), "message": payload.message},
+    )
+    await emit_event(
+        db,
+        background_tasks,
+        company_id,
+        "message.replied",
+        {
+            "conversation_id": str(conversation.id),
+            "reply": reply.text,
+            "intent": reply.intent.value,
+        },
+    )
 
     return ChatResponse(conversation_id=conversation.id, reply=reply.text)
 
@@ -140,10 +174,20 @@ async def get_conversation(
     dependencies=[Depends(require_scope("chat:write")), Depends(enforce_rate_limit)],
 )
 async def close_conversation(
-    conversation_id: UUID, company_id: CurrentCompanyId, db: DbSession
+    conversation_id: UUID,
+    company_id: CurrentCompanyId,
+    db: DbSession,
+    background_tasks: BackgroundTasks,
 ) -> Conversation:
     conversation = await _get_conversation_or_404(db, company_id, conversation_id)
     conversation.status = "closed"
     await db.commit()
     await db.refresh(conversation)
+    await emit_event(
+        db,
+        background_tasks,
+        company_id,
+        "conversation.closed",
+        {"conversation_id": str(conversation.id)},
+    )
     return conversation

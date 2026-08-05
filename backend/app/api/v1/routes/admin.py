@@ -13,6 +13,7 @@ from app.api.v1.routes import (
     promotions,
     schedule,
     services,
+    webhooks_admin,
 )
 
 router = APIRouter(prefix="/admin")
@@ -28,3 +29,4 @@ router.include_router(policies.router)
 router.include_router(faqs.router)
 router.include_router(conversations_admin.router)
 router.include_router(plugins_admin.router)
+router.include_router(webhooks_admin.router)
