@@ -5,6 +5,7 @@ from app.models.contact import Contact
 from app.models.conversation import Conversation, Message
 from app.models.faq import FAQ
 from app.models.installed_plugin import InstalledPlugin
+from app.models.plugin_migration import PluginMigration
 from app.models.policy import Policy
 from app.models.product import Product
 from app.models.promotion import Promotion
@@ -23,6 +24,7 @@ __all__ = [
     "InstalledPlugin",
     "Message",
     "Policy",
+    "PluginMigration",
     "Product",
     "Promotion",
     "ScheduleException",

@@ -29,25 +29,15 @@ manifest = PluginManifest(
 
 _TABLE = "plg_agenda_bookings"
 
-_CREATE_TABLE_SQL = f"""
-CREATE TABLE IF NOT EXISTS {_TABLE} (
-    id VARCHAR PRIMARY KEY,
-    company_id VARCHAR NOT NULL,
-    service_name VARCHAR NOT NULL,
-    scheduled_at VARCHAR NOT NULL,
-    status VARCHAR NOT NULL DEFAULT 'pending',
-    notes VARCHAR,
-    created_at VARCHAR NOT NULL
-)
-"""
-
 
 class AgendaPlugin:
     manifest = manifest
 
     async def install(self, ctx: PluginContext) -> None:
-        await ctx.db.execute(text(_CREATE_TABLE_SQL))
-        await ctx.db.commit()
+        # La tabla la crea el Plugin Manager aplicando migrations/0001_*.sql
+        # antes de llamar a install() (sección 8 del CLAUDE.md: "migraciones
+        # propias, dentro del plugin"). Nada que hacer acá para este plugin.
+        pass
 
     async def update(self, ctx: PluginContext) -> None:
         pass

@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -10,6 +10,7 @@ from app.core.exceptions import DomainError, NotFoundError
 from app.core.logging import get_logger
 from app.core.redis import get_redis
 from app.models.installed_plugin import InstalledPlugin
+from app.models.plugin_migration import PluginMigration
 from app.plugins_runtime.interface import PluginContext, PluginResult
 from app.plugins_runtime.registry import registry
 
@@ -51,6 +52,40 @@ class PluginManager:
         )
         return result.scalar_one_or_none()
 
+    async def apply_pending_migrations(self, db: AsyncSession, name: str) -> None:
+        """Migraciones propias del plugin (sección 8 del CLAUDE.md), un
+        esquema compartido por todos los tenants — no confundir con las
+        migraciones de Alembic del Core. Cada archivo .sql en
+        <plugin>/migrations se aplica como mucho una vez, en orden, y queda
+        registrado en PluginMigration; si un archivo falla, ni ese ni los
+        siguientes quedan aplicados (falla rápido, sin dejar estado a medias
+        más allá de lo que ya se confirmó)."""
+        applied = (
+            (
+                await db.execute(
+                    select(PluginMigration.filename).where(PluginMigration.plugin_name == name)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        applied_set = set(applied)
+
+        for migration_file in registry.get_migrations(name):
+            if migration_file.name in applied_set:
+                continue
+            try:
+                for statement in migration_file.read_text().split(";"):
+                    if statement.strip():
+                        await db.execute(text(statement))
+                db.add(PluginMigration(plugin_name=name, filename=migration_file.name))
+                await db.commit()
+            except Exception as exc:
+                await db.rollback()
+                raise PluginExecutionError(
+                    f"Falló la migración '{migration_file.name}' del plugin '{name}'"
+                ) from exc
+
     async def install(self, db: AsyncSession, company_id: UUID, name: str) -> InstalledPlugin:
         manifest = registry.get_manifest(name)
         plugin = registry.get(name)
@@ -60,6 +95,8 @@ class PluginManager:
         existing = await self._get_installation(db, company_id, name)
         if existing is not None:
             return existing
+
+        await self.apply_pending_migrations(db, name)
 
         ctx = self._build_context(db, company_id, {})
         try:

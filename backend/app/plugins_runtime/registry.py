@@ -15,6 +15,7 @@ class PluginRegistry:
     def __init__(self) -> None:
         self._plugins: dict[str, PluginInterface] = {}
         self._manifests: dict[str, PluginManifest] = {}
+        self._migrations: dict[str, list[Path]] = {}
         self._discovered = False
 
     def discover(self, force: bool = False) -> None:
@@ -22,6 +23,7 @@ class PluginRegistry:
             return
         self._plugins.clear()
         self._manifests.clear()
+        self._migrations.clear()
 
         plugins_dir = Path(get_settings().plugins_dir).resolve()
         if not plugins_dir.is_dir():
@@ -42,6 +44,10 @@ class PluginRegistry:
 
             self._manifests[manifest.name] = manifest
             self._plugins[manifest.name] = plugin_instance
+            migrations_dir = plugin_dir / "migrations"
+            self._migrations[manifest.name] = (
+                sorted(migrations_dir.glob("*.sql")) if migrations_dir.is_dir() else []
+            )
 
         self._discovered = True
 
@@ -65,6 +71,12 @@ class PluginRegistry:
     def list_manifests(self) -> list[PluginManifest]:
         self.discover()
         return list(self._manifests.values())
+
+    def get_migrations(self, name: str) -> list[Path]:
+        """Archivos .sql en <plugin>/migrations, ordenados por nombre (de ahí
+        la convención de prefijo numérico: 0001_..., 0002_...)."""
+        self.discover()
+        return self._migrations.get(name, [])
 
 
 registry = PluginRegistry()
