@@ -649,7 +649,36 @@ La sección 10.1/10.7 del CLAUDE.md pide que "el OpenAPI se genera automáticame
 
 - [ ] Verificación visual real en navegador de las pantallas de webhooks y horarios (sigue pendiente).
 - [ ] Pantallas de Usuarios/RBAC, Canales, Configuración en el panel (Fase 6) — implican backend nuevo (RBAC granular, adaptadores de canal), no son solo UI.
-- [ ] Extender la FK con cascada a las tablas de plugins (Fase 11d, pendiente para "agenda").
+- [ ] Extender la FK con cascada a las tablas de plugins (Fase 11d, pendiente para "agenda") — ver nota en la Fase 11g sobre por qué se descartó intentarlo hoy.
 - [ ] Exponer gestión de webhooks también en `/public` con scope `webhooks:manage`; cifrado en reposo del secreto del webhook; evento `handoff.requested` sin flujo que lo dispare.
 - [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5).
 - [ ] Rollback de migraciones de plugin, generalizar `chat_triggers` a otros plugins, LLM real, gestor de secretos de producción.
+
+---
+
+## 2026-08-06 — Fase 11g: `webhooks:manage` en `/public`; se descarta la FK cascada de plugins por hoy
+
+### Qué se creó
+
+`app/api/v1/routes/webhooks_public.py`: el mismo CRUD que ya existía en `/admin/webhooks`, ahora también disponible en `/api/v1/public/webhooks` para que un proyecto externo con una API key de scope `webhooks:manage` configure sus propios webhooks sin depender del panel — el scope ya existía en `API_KEY_SCOPES` desde la Fase 3, solo faltaba el router. Cierra ese pendiente de la Fase 11 original.
+
+Tests nuevos (`test_webhooks_public.py`): sin el scope da 403, con el scope el CRUD completo funciona, y aislamiento entre tenants (una key no puede ni listar ni ver entregas de webhooks de otra empresa).
+
+**Verificado en producción**: 403 sin scope → con el scope correcto, create/list/patch/deliveries/delete devolvieron exactamente lo esperado. Datos de prueba limpiados con un solo `DELETE FROM companies`.
+
+**Nota sobre el gate de CI**: el primer push de esta fase rompió el paso "OpenAPI contract up to date" agregado en la Fase 11f — exactamente para lo que se construyó: agregué endpoints nuevos y me olvidé de regenerar `docs/openapi.json`. Se regeneró y se volvió a pushear; CI quedó en verde. Buena señal de que el gate funciona como se pretendía.
+
+### Por qué se descartó la FK cascada de las tablas de plugins (pendiente de la Fase 11d)
+
+Se evaluó extender el `ON DELETE CASCADE` de la Fase 11d a `plg_agenda_bookings`, pero se descartó después de escribir y probar la migración, por una razón de fondo, no de tiempo: las migraciones de plugins (sección 8 del CLAUDE.md) son SQL crudo sin noción de dialecto, y corren igual contra SQLite (en los tests) y Postgres (en producción). La tabla de "agenda" fue diseñada a propósito con columnas `VARCHAR` (no `UUID` nativo) para ser portable entre ambos motores. Agregar la FK requiere `ALTER TABLE ... ALTER COLUMN company_id TYPE uuid` y `ADD CONSTRAINT ... FOREIGN KEY`, sintaxis que **SQLite no soporta** — la migración rompería toda la suite de tests de plugins en CI, no solo localmente.
+
+Resolverlo bien requeriría rediseñar el mecanismo de migraciones de plugins para que soporte SQL por dialecto (como hace Alembic con `op.*`), lo cual es un cambio de arquitectura, no un pendiente chico. Se dejó documentado en vez de forzarlo a medias.
+
+### Pendiente / próximos pasos sugeridos (al cierre de la Fase 11g)
+
+- [ ] Verificación visual real en navegador de las pantallas de webhooks y horarios.
+- [ ] Pantallas de Usuarios/RBAC, Canales, Configuración en el panel (Fase 6) — requieren backend nuevo.
+- [ ] Rediseñar el mecanismo de migraciones de plugins para soportar SQL por dialecto, y recién ahí extender la FK cascada a `plg_agenda_bookings`.
+- [ ] Cifrado en reposo del secreto del webhook; evento `handoff.requested` sin flujo que lo dispare.
+- [ ] Hooks/eventos del manifiesto de plugins hacia un event bus propio de plugins (Fase 5).
+- [ ] Rollback de migraciones de plugin, generalizar `chat_triggers` a otros plugins, LLM real, gestor de secretos de producción, canales reales (WhatsApp/Instagram/Messenger), SDKs oficiales, widget embebible.
